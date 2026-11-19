@@ -741,6 +741,17 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // ----- Bark Section -----
   const barkSection = createSection('Bark', 'cube', false);
+  const barkDamage = createSlider('Bark Chipping', tree.options.bark.damage, 0, 1, 0.01, value => {
+    tree.options.bark.damage = value;
+    if (fitTarget !== null) {
+      details[previewLevel] = tree.fitTriangleBudget(fitTarget, { thinLeaves: details[previewLevel].leafDetail === 'thin' });
+      refreshOptimization();
+    }
+    applyLODPreview();
+    updateInfoDisplays();
+  });
+  barkSection.add(barkDamage);
+  controls.push({ control: barkDamage, update: () => barkDamage.setValue(tree.options.bark.damage) });
 
   const barkTypeSelect = createSelect('Type', BarkType, tree.options.bark.type, (val) => {
     tree.options.bark.type = val;
@@ -989,6 +1000,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   });
   leavesSection.add(shootColor);
   controls.push({ control: shootColor, update: () => shootColor.setValue(tree.options.leaves.shootColorVariation) });
+  const leafDamage = createSlider('Leaf Damage', tree.options.leaves.damage, 0, 1, 0.01, value => {
+    tree.options.leaves.damage = value;
+    applyLODPreview();
+    updateInfoDisplays();
+  });
+  leavesSection.add(leafDamage);
+  controls.push({ control: leafDamage, update: () => leafDamage.setValue(tree.options.leaves.damage) });
 
   const leafAngleSlider = createSlider('Angle', tree.options.leaves.angle, 0, 100, 1, (val) => {
     tree.options.leaves.angle = val;

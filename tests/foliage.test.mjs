@@ -3,6 +3,38 @@ import test from 'node:test';
 import { DoubleSide, FrontSide, Line3, Quaternion, ShaderLib, Texture, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
 
+test('increasing damage keeps earlier wounds and their leaf identities across LODs', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 0;
+  tree.options.leaves.count = 48;
+  for (const type of Object.values(LeafType)) {
+    tree.options.leaves.type = type;
+    tree.generate({ leafDetail: 'thin' });
+    let reference;
+    for (const leafDetail of ['thin', 'coarse', 'reduced', 'full']) {
+      const meshes = [0, 0.35, 1].map(damage => {
+        tree.options.leaves.damage = damage;
+        return tree.createGeometry({ leafDetail }).leaves;
+      });
+      const [clean, mixed, worn] = meshes.map(g => g.attributes.position.array);
+      assert.deepEqual(meshes[0].index.array, meshes[2].index.array);
+      const size = clean.length / tree.skeleton.leaves.length;
+      const ids = [];
+      for (let start = 0; start < clean.length; start += size) {
+        const part = data => data.subarray(start, start + size);
+        assert.notDeepEqual(part(clean), part(worn));
+        if (part(mixed).some((v, i) => v !== clean[start + i])) {
+          ids.push(start / size);
+          assert.deepEqual(part(mixed), part(worn));
+        }
+      }
+      assert(ids.length && ids.length < tree.skeleton.leaves.length);
+      if (reference) assert.deepEqual(ids, reference);
+      reference = ids;
+    }
+  }
+});
+
 test('the upper surfaces of both opposite ash leaflets face the same side of the stalk', () => {
   const tree = new Tree();
   tree.options.branch.levels = 0;
@@ -115,6 +147,7 @@ test('each shipped preset fits the budget with closed or thin blades, including 
   for (const preset of Object.keys(TreePreset)) {
     const tree = new Tree();
     tree.loadPreset(preset);
+    tree.options.bark.damage = 0; // Reference budget for an unchipped trunk.
     const target = 25000;
     for (const thinLeaves of [false, true]) {
       const detail = tree.fitTriangleBudget(target, { thinLeaves });
@@ -291,7 +324,7 @@ test('simplified side shoots and terminal continuations stay joined to translate
   const p = tree.branchesMesh.geometry.attributes.position;
   const centers = new Map();
   let first = 0, displaced = 0;
-  for (const {sections, segmentCount, attachment} of tree.skeleton.branches) {
+  for (const {sections, segmentCount, attachment, chip} of tree.skeleton.branches) {
     const lo = sections[0].origin, hi = sections.at(-1).origin;
     const shift = new Vector3();
     if (attachment) {
@@ -306,6 +339,7 @@ test('simplified side shoots and terminal continuations stay joined to translate
     sections.forEach((s, i) => centers.set(s,
       new Vector3().lerpVectors(lo, hi, i / (sections.length - 1)).add(shift)));
     first += 2 * (segmentCount + 1);
+    if (chip?.threshold < tree.options.bark.damage) first += 16;
   }
   assert(displaced > 0);
 });

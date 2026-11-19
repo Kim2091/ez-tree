@@ -3,8 +3,28 @@ import test from 'node:test';
 import { Vector3 } from 'three';
 import { Tree } from '../build/ez-tree.es.js';
 
+test('recessed bark chips survive ring reduction and fit inside the tree budget', () => {
+  const tree = new Tree();
+  tree.loadPreset('Ash Medium');
+  const detail = tree.fitTriangleBudget(25000, { thinLeaves: true });
+  const count = tree.skeleton.branches.filter(b => b.chip?.threshold < tree.options.bark.damage).length;
+  assert(count > 0);
+  for (const level of [detail, { sectionStride: 1, segmentFactor: 1, leafScale: 0 }]) {
+    tree.options.bark.damage = 0.25;
+    const { branches, leaves } = tree.createGeometry(level);
+    if (level === detail) assert((branches.index.count + leaves.index.count) / 3 <= 25000);
+    tree.options.bark.damage = 0;
+    const clean = tree.createGeometry(level).branches;
+    assert.equal(branches.index.count - clean.index.count, 30 * count);
+    assert.equal(branches.attributes.color.count, branches.attributes.position.count);
+    assert(branches.attributes.color.array.some(v => v < 255));
+    assert(clean.attributes.color.array.every(v => v === 255));
+  }
+});
+
 test('tapered side branches have outward normals perpendicular to the sloping bark', () => {
   const tree = new Tree();
+  tree.options.bark.damage = 0; // Compare uninterrupted rows of tapering bark.
   const branch = tree.options.branch;
   branch.levels = 1;
   branch.children[0] = 1;

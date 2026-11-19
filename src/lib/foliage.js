@@ -34,13 +34,14 @@ const thinStations = new Map([
   [needle, [needle[0]]],
 ]);
 
-function makeTemplate(type, detail, variant) {
+function makeTemplate(type, detail, variant, damagePattern) {
   const positions = [], colors = [], indices = [], uvs = [];
   const lowerFaces = [];
   const color = new THREE.Color({
     oak: 0x66864a, aspen: 0x83a357, ash: 0x749553, pine: 0x4c7861,
   }[type]);
   const point = new THREE.Vector3();
+  let bladeIndex = 0;
 
   // A blade grows along local +Y. Spread opens it away from the stalk and
   // azimuth turns it around the stalk. Sub-blades share the same wind field.
@@ -50,7 +51,34 @@ function makeTemplate(type, detail, variant) {
     );
     const halfWidth = Math.max(...profile.map(row => row[1]));
     const broad = profile !== stalk && profile !== needle;
+    // Wear on a compound leaf belongs to one leaflet. On pine, choose a
+    // needle that also exists in the three-needle coarse template.
+    const partCount = type === LeafType.Ash ? 5 : type === LeafType.Pine ? 3 : 1;
+    const damaged = damagePattern >= 0 && profile !== stalk && bladeIndex++ === damagePattern % partCount;
+    const side = damagePattern % 2 ? 1 : -1;
+    const tornTip = profile === needle || damagePattern % 4 >= 2;
+    const biteHeight = damagePattern >= 4 ? 0.62 : 0.48;
     function vertex(x, y, z, tone, underside = false) {
+      let dry = 0;
+      if (damaged && tornTip) {
+        // An oblique tear ends the veins early. Compress the last stations
+        // into a curled lip, keeping both faces and the very end watertight.
+        const cut = (profile === needle ? 0.60 : 0.74) + 0.12 * side * x / halfWidth;
+        const missing = Math.max(0, y - cut);
+        dry = THREE.MathUtils.smoothstep(y - cut, -0.065, 0.045);
+        y -= 0.94 * missing;
+        x += side * halfWidth * missing * 0.50;
+        z -= missing * (profile === needle ? 0.035 : 0.18);
+      } else if (damaged && x * side > 0) {
+        // Pull one patch of margin inward. On very sparse blades its nearest
+        // surviving edge vertex represents the missing margin at a distance.
+        const span = detail === 'full' ? 0.135 : 0.32;
+        const distance = Math.abs(y - biteHeight) / span;
+        const bite = Math.sqrt(Math.max(0, 1 - distance * distance));
+        x *= 1 - 0.61 * bite;
+        z -= 0.027 * bite;
+        dry = 0.78 * bite;
+      }
       // Project each individual blade in its own frame. Compound leaves and
       // needles each get a root-to-tip texture with their own central vein.
       uvs.push(0.5 + x / (2 * halfWidth) * (profile === stalk ? 0.025 : 0.96), y);
@@ -72,8 +100,9 @@ function makeTemplate(type, detail, variant) {
       point.set(x, y, z).multiplyScalar(length).applyQuaternion(orientation);
       positions.push(point.x, point.y + base, point.z);
       const pale = broad && underside;
-      colors.push(color.r * tone * (pale ? 1.36 : 1), color.g * tone * (pale ? 1.20 : 1),
-        color.b * tone * (pale ? 1.65 : 1));
+      colors.push(color.r * tone * (pale ? 1.36 : 1) * (1 + 0.62 * dry),
+        color.g * tone * (pale ? 1.20 : 1) * (1 - 0.54 * dry),
+        color.b * tone * (pale ? 1.65 : 1) * (1 - 0.55 * dry));
       return positions.length / 3 - 1;
     }
 
@@ -174,15 +203,14 @@ function makeTemplate(type, detail, variant) {
 }
 
 const templates = new Map();
-for (const detail of ['full', 'reduced', 'coarse', 'thin']) {
-  templates.set(detail, new Map(Object.values(LeafType).map(type => [
-    type, [-1, -0.5, 0, 0.5, 1].map(variant => makeTemplate(type, detail, variant)),
-  ])));
-}
-
-function getTemplate(type, detail) {
-  const species = templates.get(detail) ?? templates.get('full');
-  return species.get(type) ?? species.get(LeafType.Oak);
+function getTemplate(type, detail, damagePattern = -1) {
+  const shape = Object.values(LeafType).includes(type) ? type : LeafType.Oak;
+  const resolution = ['thin', 'coarse', 'reduced'].includes(detail) ? detail : 'full';
+  const key = shape + '/' + resolution + '/' + damagePattern;
+  if (!templates.has(key)) {
+    templates.set(key, [-1, -0.5, 0, 0.5, 1].map(variant => makeTemplate(shape, resolution, variant, damagePattern)));
+  }
+  return templates.get(key);
 }
 
 export function trianglesPerLeaf(type, detail) {
@@ -217,9 +245,11 @@ function withFaceUVs(source) {
 // Bake the local template into a single indexed mesh for rendering and GLB.
 // Allocate once at the final size, since dense presets can have thousands of
 // placements. Use the original skeleton index at every LOD for stable color.
-export function meshFoliage(placements, type, stride, scale, detail, offsets, useFaceUVs, shootColorVariation) {
+export function meshFoliage(placements, options, stride, scale, detail, offsets, useFaceUVs, seed) {
+  const { type, shootColorVariation, damage } = options;
   const originals = getTemplate(type, detail);
   const variants = useFaceUVs ? originals.map(withFaceUVs) : originals;
+  const worn = [];
   const topology = variants[0];
   const count = scale > 0 ? Math.ceil(placements.length / stride) : 0;
   const perLeaf = topology.positions.length / 3;
@@ -246,7 +276,21 @@ export function meshFoliage(placements, type, stride, scale, detail, offsets, us
     orientation.setFromEuler(leaf.orientation);
     const size = leaf.size * scale;
     const phase = (i * 0.61803398875 + leaf.size) % 1;
-    const template = variants[Math.floor(phase * variants.length)];
+    const pose = Math.floor(phase * variants.length);
+    let template = variants[pose];
+    if (damage > 0) {
+      // Separate bits select incidence and wound shape. Raising incidence
+      // reveals additional injuries while preserving every existing one.
+      let hash = Math.imul(i + 1, 0x9e3779b1) ^ seed;
+      hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+      hash ^= hash >>> 13;
+      if ((hash & 0xffff) < damage * 65536) {
+        const pattern = hash >>> 29;
+        worn[pattern] ??= getTemplate(type, detail, pattern);
+        template = worn[pattern][pose];
+        if (useFaceUVs) template = withFaceUVs(template);
+      }
+    }
     const tone = shootColorVariation ? 0.5 + 0.45 * (phase - 0.5) : phase;
     const pigment = shootColorVariation ? (leaf.pigment ?? 0) * (type === LeafType.Pine ? 0.65 : 1) : 0;
     const brightness = 0.81 + 0.30 * tone;

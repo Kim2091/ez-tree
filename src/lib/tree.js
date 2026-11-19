@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import RNG from './rng';
+import { chipTrianglesAdded, cutBarkChip } from './bark-chip';
 import { Branch, applyAttachmentOffset } from './branch';
 import { TreeType } from './enums';
 import { meshFoliage, trianglesPerLeaf } from './foliage';
@@ -10,6 +11,16 @@ import { Trellis } from './trellis';
 const up = new THREE.Vector3(0, 1, 0);
 const turn = Math.PI * 2;
 const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+
+// The blade's local +Y follows its midrib and +Z is its upper surface.
+function leafOrientation(axis, roll) {
+  axis.normalize();
+  const side = new THREE.Vector3().crossVectors(axis, up);
+  if (side.lengthSq() < 1e-8) side.set(1, 0, 0);
+  side.normalize().applyAxisAngle(axis, roll);
+  const normal = new THREE.Vector3().crossVectors(side, axis);
+  return new THREE.Euler().setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, axis, normal));
+}
 
 // Sample position, orientation and taper at the same point on the parent.
 function sampleBranch(sections, t) {
@@ -357,6 +368,7 @@ export class Tree extends THREE.Group {
       normals: [],
       indices: [],
       uvs: [],
+      colors: [],
       windFactor: []
     };
 
@@ -367,8 +379,8 @@ export class Tree extends THREE.Group {
 
     const maps = this.options.leaves.maps;
     const faceUVs = this.options.leaves.textured && (maps?.roughness?.channel === 1 || maps?.normal?.channel === 1);
-    const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves.type, leafStride, leafScale,
-      detail.leafDetail, offsets, faceUVs, this.options.leaves.shootColorVariation);
+    const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves, leafStride, leafScale,
+      detail.leafDetail, offsets, faceUVs, this.options.seed);
     return { branches, leaves };
   }
 
@@ -383,6 +395,9 @@ export class Tree extends THREE.Group {
   fitTriangleBudget(target, { thinLeaves = false } = {}) {
     if (!this.skeleton) this.#generateSkeleton();
     let fixed = 0;
+    for (const branch of this.skeleton.branches) {
+      if (branch.chip?.threshold < this.options.bark.damage) fixed += chipTrianglesAdded;
+    }
     this.trellisMesh?.traverseVisible(o => { if (o.isMesh) fixed += o.geometry.index.count / 3; });
     const count = this.skeleton.leaves.length;
     const bladeDetails = thinLeaves ? ['thin'] : ['full', 'reduced', 'coarse'];
@@ -522,7 +537,13 @@ export class Tree extends THREE.Group {
       sectionOrientation.setFromQuaternion(qSection);
     }
 
+    const chipRng = new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x85ebca6b));
+    const chip = branch.radius > 0.045 && branch.length > 0.12 ? {
+      threshold: chipRng.random() * (branch.level === 0 ? 0.24 : 1),
+      height: chipRng.random(0.77, 0.16), angle: chipRng.random(), lean: chipRng.random(0.65, -0.65),
+    } : null;
     this.skeleton.branches.push({
+      chip,
       sections,
       segmentCount: branch.segmentCount,
       baseRadius: branch.radius,
@@ -555,7 +576,19 @@ export class Tree extends THREE.Group {
           ),
         );
       } else {
-        this.#recordLeaf(lastSection.origin, lastSection.orientation, 1, endAttachment);
+        let orientation = lastSection.orientation;
+        if (this.options.leaves.type !== 'pine') {
+          // A terminal petiole continues the shoot, then bends as the blade opens.
+          // Its roll follows the sky even when the supporting wood has twisted.
+          const rng = new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length, 0x85ebca6b));
+          const azimuth = rng.random(turn);
+          const opening = THREE.MathUtils.degToRad(this.options.leaves.angle * rng.random(0.58, 0.36));
+          const axis = new THREE.Vector3(Math.cos(azimuth) * Math.sin(opening), Math.cos(opening),
+            Math.sin(azimuth) * Math.sin(opening)).applyEuler(lastSection.orientation);
+          axis.y = axis.y * 0.70 - 0.08;
+          orientation = leafOrientation(axis, rng.random(0.46, -0.46));
+        }
+        this.#recordLeaf(lastSection.origin, orientation, 1, endAttachment);
       }
     }
 
@@ -660,12 +693,7 @@ export class Tree extends THREE.Group {
         // The blade's wide surface tends to face the sky, with some roll and
         // petiole droop. Needles keep their radial arrangement around the shoot.
         if (type !== 'pine') axis.y = axis.y * 0.65 - this.rng.random(0.23, 0.02);
-        axis.normalize();
-        const side = new THREE.Vector3().crossVectors(axis, up);
-        if (side.lengthSq() < 1e-8) side.set(1, 0, 0);
-        side.normalize().applyAxisAngle(axis, this.rng.random(0.72, -0.72));
-        const normal = new THREE.Vector3().crossVectors(side, axis);
-        const rotation = new THREE.Euler().setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, axis, normal));
+        const rotation = leafOrientation(axis, this.rng.random(0.72, -0.72));
         this.#recordLeaf(origin, rotation, type === 'pine' ? Math.min(1, 0.58 + vigor) : 1, attachment);
       }
     }
@@ -775,6 +803,7 @@ export class Tree extends THREE.Group {
         buffers.verts.push(...Object.values(vertex));
         buffers.normals.push(...Object.values(normal));
         buffers.uvs.push(...Object.values(uv));
+        buffers.colors.push(255, 255, 255);
 
         if (j === 0) {
           first = { vertex, normal, uv };
@@ -786,11 +815,16 @@ export class Tree extends THREE.Group {
       buffers.verts.push(...Object.values(first.vertex));
       buffers.normals.push(...Object.values(first.normal));
       buffers.uvs.push(wrapsX, first.uv.y);
+      buffers.colors.push(255, 255, 255);
     }
 
     // Build geometry for each section of the branch (cylinder without end caps)
     let v1, v2, v3, v4;
     const N = segments + 1;
+    const chip = skeletonBranch.chip;
+    const cut = chip?.threshold < this.options.bark.damage;
+    const height = cut ? chip.height * sections.at(-1).distance : -1;
+    const column = cut ? Math.floor(chip.angle * segments) : -1;
     for (let i = 0; i < sampled.length - 1; i++) {
       // Build the quad for each segment of the section
       for (let j = 0; j < segments; j++) {
@@ -799,7 +833,17 @@ export class Tree extends THREE.Group {
         v2 = indexOffset + i * N + (j + 1);
         v3 = v1 + N;
         v4 = v2 + N;
-        buffers.indices.push(v1, v3, v2, v2, v3, v4);
+        if (j === column && sampled[i].distance <= height && height < sampled[i + 1].distance) {
+          const span = sampled[i + 1].distance - sampled[i].distance;
+          const radius = sampled[i].radius;
+          const u = THREE.MathUtils.clamp(chip.angle * segments - j, 0.12, 0.88);
+          const v = THREE.MathUtils.clamp((height - sampled[i].distance) / span, 0.08, 0.92);
+          const w = Math.min(0.045 * segments, 0.85 * Math.min(u, 1 - u));
+          const h = Math.min(1.15 * radius / span, 0.90 * Math.min(v, 1 - v));
+          cutBarkChip(buffers, [v1, v3, v4, v2], u, v, w, h, Math.min(0.11 * radius, 0.24 * h * span), chip.lean);
+        } else {
+          buffers.indices.push(v1, v3, v2, v2, v3, v4);
+        }
       }
     }
   }
@@ -817,7 +861,8 @@ export class Tree extends THREE.Group {
     g.setAttribute('normal', attribute(buffers.normals, 3));
     g.setAttribute('uv', attribute(buffers.uvs, 2));
     if (buffers.faceUVs) g.setAttribute('uv1', attribute(buffers.faceUVs, 2));
-    if (buffers.colors) g.setAttribute('color', attribute(buffers.colors, 3));
+    if (buffers.colors) g.setAttribute('color', buffers.flex ? attribute(buffers.colors, 3)
+      : new THREE.Uint8BufferAttribute(buffers.colors, 3, true));
     if (buffers.flex) {
       g.setAttribute('leafFlex', attribute(buffers.flex, 1));
       g.userData.leafSites = buffers.leafSites;
@@ -837,6 +882,7 @@ export class Tree extends THREE.Group {
   #createBarkMaterial() {
     const mat = new THREE.MeshStandardMaterial({
       name: 'branches',
+      vertexColors: true,
       flatShading: this.options.bark.flatShading,
       color: new THREE.Color(this.options.bark.tint),
       metalness: 0.0,
