@@ -29,7 +29,7 @@
   ],
   "types": "./build/ez-tree.es.d.ts",
   "scripts": {
-    "test": "npm run build:lib && node --test tests/foliage.test.mjs",
+    "test": "npm run build:lib && node --test tests/bark-normals.test.mjs tests/foliage.test.mjs",
     "dev": "vite --config vite.app.config.js",
     "build:app": "vite build --config vite.app.config.js",
     "build:lib": "vite build --config vite.lib.config.js",

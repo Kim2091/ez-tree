@@ -151,9 +151,9 @@ function makeTemplate(type, detail, variant) {
     blade(stalk, 0.74, 0, 0, 0, 0.8);
     // Opposite leaflet pairs and a terminal leaflet share one rachis.
     for (const [base, length, pitch] of [[0.21, 0.48, 1.0], [0.44, 0.41, 0.87]]) {
-      for (const angle of [0.12, Math.PI - 0.12]) {
-        blade(leaflet, length, base, pitch, angle);
-      }
+      // Mirror the opening angle in the blade plane so both upper surfaces face up.
+      blade(leaflet, length, base, pitch, 0.12);
+      blade(leaflet, length, base, -pitch, -0.12);
     }
     blade(leaflet, 0.34, 0.68, 0.06);
   } else if (type === LeafType.Pine) {
@@ -217,7 +217,7 @@ function withFaceUVs(source) {
 // Bake the local template into a single indexed mesh for rendering and GLB.
 // Allocate once at the final size, since dense presets can have thousands of
 // placements. Use the original skeleton index at every LOD for stable color.
-export function meshFoliage(placements, type, stride, scale, detail, offsets, useFaceUVs) {
+export function meshFoliage(placements, type, stride, scale, detail, offsets, useFaceUVs, shootColorVariation) {
   const originals = getTemplate(type, detail);
   const variants = useFaceUVs ? originals.map(withFaceUVs) : originals;
   const topology = variants[0];
@@ -247,16 +247,21 @@ export function meshFoliage(placements, type, stride, scale, detail, offsets, us
     const size = leaf.size * scale;
     const phase = (i * 0.61803398875 + leaf.size) % 1;
     const template = variants[Math.floor(phase * variants.length)];
-    const brightness = 0.81 + 0.30 * phase;
+    const tone = shootColorVariation ? 0.5 + 0.45 * (phase - 0.5) : phase;
+    const pigment = shootColorVariation ? (leaf.pigment ?? 0) * (type === LeafType.Pine ? 0.65 : 1) : 0;
+    const brightness = 0.81 + 0.30 * tone;
+    const red = brightness * (0.92 + 0.22 * tone) * (1 + 0.58 * pigment);
+    const green = brightness * (1 + 0.30 * pigment);
+    const blue = brightness * (1 - 0.12 * pigment);
     for (let j = 0; j < perLeaf; j++) {
       const src = 3 * j;
       const dst = 3 * (start + j);
       point.fromArray(template.positions, src).applyQuaternion(orientation)
         .multiplyScalar(size).add(origin).toArray(verts, dst);
       point.fromArray(template.normals, src).applyQuaternion(orientation).toArray(normals, dst);
-      colors[dst] = template.colors[src] * brightness * (0.92 + 0.22 * phase);
-      colors[dst + 1] = template.colors[src + 1] * brightness;
-      colors[dst + 2] = template.colors[src + 2] * brightness;
+      colors[dst] = template.colors[src] * red;
+      colors[dst + 1] = template.colors[src + 1] * green;
+      colors[dst + 2] = template.colors[src + 2] * blue;
       flex[start + j] = template.positions[src + 1] * size;
     }
     uvs.set(template.uvs, 2 * start);

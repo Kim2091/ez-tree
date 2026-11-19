@@ -368,7 +368,7 @@ export class Tree extends THREE.Group {
     const maps = this.options.leaves.maps;
     const faceUVs = this.options.leaves.textured && (maps?.roughness?.channel === 1 || maps?.normal?.channel === 1);
     const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves.type, leafStride, leafScale,
-      detail.leafDetail, offsets, faceUVs);
+      detail.leafDetail, offsets, faceUVs, this.options.leaves.shootColorVariation);
     return { branches, leaves };
   }
 
@@ -530,6 +530,7 @@ export class Tree extends THREE.Group {
       attachment: branch.attachment,
     });
 
+    const firstLeaf = this.skeleton.leaves.length;
     // Deciduous trees have a terminal branch that grows out of the
     // end of the parent branch
     if (this.options.type === 'deciduous') {
@@ -571,6 +572,19 @@ export class Tree extends THREE.Group {
           ? Math.round(count * Math.min(1, 0.24 + branch.vigor)) : count,
         branch.level + 1,
         sections, branch.vigor);
+    }
+
+    if (firstLeaf < this.skeleton.leaves.length) {
+      // A separate seed keeps pigment independent of the growth RNG and blade shape.
+      const shoot = new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length, 0x9e3779b1)).random();
+      const length = sections.at(-1).distance;
+      for (let i = firstLeaf; i < this.skeleton.leaves.length; i++) {
+        const leaf = this.skeleton.leaves[i];
+        const { a, b, f } = leaf.attachment;
+        const distance = THREE.MathUtils.lerp(a.distance, b.distance, f);
+        const tip = length > 0 ? THREE.MathUtils.smoothstep(distance / length, 0.45, 1) : 0;
+        leaf.pigment = 0.80 * shoot - 0.65 + (0.28 + 0.55 * shoot) * tip;
+      }
     }
   }
 
@@ -722,8 +736,14 @@ export class Tree extends THREE.Group {
     const flareStrength = skeletonBranch.trunk
       ? Math.min(1, 12 * baseRadius / Math.max(0.01, sections.at(-1).distance)) : 0;
 
-    for (let k = 0; k < sampled.length; k++) {
+    for (let k = 0, ring = 0; k < sampled.length; k++) {
       const section = sampled[k];
+      // Read the original taper so shared rings keep their lighting across LODs.
+      while (sections[ring] !== section) ring++;
+      const before = sections[Math.max(0, ring - 1)];
+      const after = sections[Math.min(ring + 1, sections.length - 1)];
+      const run = after.distance - before.distance;
+      const taper = run !== 0 ? (before.radius - after.radius) / run : 0;
       const flare = flareStrength * Math.exp(-section.distance / flareHeight);
 
       // Create the segments that make up this section.
@@ -740,8 +760,9 @@ export class Tree extends THREE.Group {
           .add(section.origin).add(translation);
 
         const dr = flare * (-1.45 * Math.sin(5 * angle + phase) - 0.48 * Math.sin(3 * angle - phase)) / (1 + flare * lobe);
+        const axial = taper * (1 + flare * lobe) + section.radius * flare * lobe / flareHeight;
         const normal = new THREE.Vector3(Math.cos(angle) + dr * Math.sin(angle),
-          section.radius * flare * lobe / flareHeight, Math.sin(angle) - dr * Math.cos(angle))
+          axial, Math.sin(angle) - dr * Math.cos(angle))
           .applyEuler(section.orientation)
           .normalize();
 

@@ -982,6 +982,14 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   leavesSection.add(leafTintPicker);
   controls.push({ control: leafTintPicker, update: () => leafTintPicker.setValue(tree.options.leaves.tint) });
 
+  const shootColor = createToggle('Shoot Color Variation', tree.options.leaves.shootColorVariation, value => {
+    tree.options.leaves.shootColorVariation = value;
+    applyLODPreview();
+    updateInfoDisplays();
+  });
+  leavesSection.add(shootColor);
+  controls.push({ control: shootColor, update: () => shootColor.setValue(tree.options.leaves.shootColorVariation) });
+
   const leafAngleSlider = createSlider('Angle', tree.options.leaves.angle, 0, 100, 1, (val) => {
     tree.options.leaves.angle = val;
     onChange();

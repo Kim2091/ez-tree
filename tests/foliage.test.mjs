@@ -1,7 +1,59 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DoubleSide, FrontSide, Line3, ShaderLib, Texture, Vector2, Vector3 } from 'three';
+import { DoubleSide, FrontSide, Line3, Quaternion, ShaderLib, Texture, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
+
+test('the upper surfaces of both opposite ash leaflets face the same side of the stalk', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 0;
+  tree.options.leaves.type = LeafType.Ash;
+  tree.options.leaves.maps.normal = new Texture();
+  tree.options.leaves.maps.normal.channel = 1;
+  tree.options.leaves.textured = true;
+  for (const leafDetail of ['full', 'reduced', 'coarse', 'thin']) {
+    tree.generate({ leafDetail });
+    const g = tree.leavesMesh.geometry;
+    const { origin, size, orientation } = tree.skeleton.leaves[0];
+    const inverse = new Quaternion().setFromEuler(orientation).invert();
+    const upper = [new Vector3(), new Vector3()];
+    for (let i = 0; i < g.index.count / tree.skeleton.leaves.length; i += 3) {
+      const indices = [0, 1, 2].map(j => g.index.getX(i + j));
+      if (g.attributes.uv1.getX(indices[0]) >= 0.5) continue;
+      const [a, b, c] = indices.map(j => new Vector3().fromBufferAttribute(g.attributes.position, j)
+        .sub(origin).applyQuaternion(inverse).divideScalar(size));
+      const x = (a.x + b.x + c.x) / 3;
+      if (Math.abs(x) > 0.10) upper[Number(x > 0)].add(b.sub(a).cross(c.sub(a)));
+    }
+    for (const normal of upper) assert(normal.normalize().z > 0.85, leafDetail);
+  }
+});
+
+test('shoot variation changes only baked pigment and stays consistent across blade resolutions', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 0;
+  tree.options.leaves.type = LeafType.Ash;
+  tree.options.leaves.count = 12;
+  tree.generate({ leafDetail: 'thin' });
+  const natural = tree.leavesMesh.geometry;
+  const sites = tree.skeleton.leaves;
+  assert(sites[0].pigment > sites[1].pigment); // terminal leaf and the basal pair
+  for (let i = 1; i < sites.length; i += 2) assert.equal(sites[i].pigment, sites[i + 1].pigment);
+  const full = tree.createGeometry({ leafDetail: 'full' }).leaves;
+  for (let i = 0; i < sites.length; i++) {
+    const root = g => new Vector3().fromBufferAttribute(g.attributes.color, i * g.attributes.color.count / sites.length);
+    assert(root(full).equals(root(natural)));
+  }
+  tree.options.leaves.shootColorVariation = false;
+  const plain = tree.createGeometry({ leafDetail: 'thin' }).leaves;
+  for (const key of ['position', 'normal', 'uv', 'leafFlex']) {
+    assert.deepEqual(natural.attributes[key].array, plain.attributes[key].array);
+  }
+  assert.deepEqual(natural.index.array, plain.index.array);
+  assert.notDeepEqual(natural.attributes.color.array, plain.attributes.color.array);
+  tree.options.leaves.shootColorVariation = true;
+  tree.generate({ leafDetail: 'thin' });
+  assert.deepEqual(natural.attributes.color.array, tree.leavesMesh.geometry.attributes.color.array);
+});
 
 test('the full, reduced and coarse blades enclose a volume', () => {
   for (const type of Object.values(LeafType)) {

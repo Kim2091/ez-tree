@@ -23,7 +23,11 @@ Closed oak, aspen, and ash blades have a waxier upper surface and a paler, rough
 
 ![The same backlit aspen blade with scattering off and at the default strength](docs/aspen-backlight.jpg)
 
-Bark UVs follow branch length through every LOD. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
+**Leaves → Shoot Color Variation** gives leaves on a shoot a shared tint, with lighter, warmer growth toward the tip. It is enabled by default and uses the existing vertex colors in the editor and in GLB and USD exports. Each retained leaf keeps its tint across LODs.
+
+![Before and after views of the same fitted ash canopy and a full-detail compound leaf. Both pairs of leaflets now show their upper surface together.](docs/ash-shoot-realism.jpg)
+
+Bark UVs follow branch length through every LOD. Bark normals follow the slope of each taper so narrowing twigs catch light along their length. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
 
 ## Optimize a tree
 

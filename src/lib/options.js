@@ -15,6 +15,7 @@ export default class TreeOptions {
       ...oak.leaves,
       maps: { color: null, normal: null, roughness: null, subsurface: null },
       subsurfaceStrength: 0.65,
+      shootColorVariation: true,
       roundedNormals: true,
     };
 
