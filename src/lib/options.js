@@ -13,7 +13,8 @@ export default class TreeOptions {
     this.branch = structuredClone(oak.branch);
     this.leaves = {
       ...oak.leaves,
-      maps: { color: null, normal: null, roughness: null },
+      maps: { color: null, normal: null, roughness: null, subsurface: null },
+      subsurfaceStrength: 0.65,
       roundedNormals: true,
     };
 

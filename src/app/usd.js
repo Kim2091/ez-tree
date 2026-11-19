@@ -48,6 +48,56 @@ function writeMesh(parts, mesh, name, kind, textures) {
   parts.push('    }\n');
 }
 
+// A second surface terminal lets MaterialX-capable renderers use a thin-walled
+// scattering material while other USD viewers use the universal preview surface.
+function leafMaterialX(path, textures, scattering) {
+  const out = name => `<${path}/${name}.outputs:out>`;
+  const node = (name, id, type, inputs) => `
+        def Shader "${name}" {
+            uniform token info:id = "ND_${id}"
+            ${inputs.join('\n            ')}
+            ${type} outputs:out
+        }`;
+  const image = (name, map, type, mxType) => node(name, 'image_' + mxType, type, [
+    `asset inputs:file = @${textures[map]}@` + (map === 'color' ? ' (colorSpace = "srgb_texture")' : ''),
+    `float2 inputs:texcoord.connect = ${out('LeafUV')}`,
+  ]);
+  const nodes = [
+    node('LeafUV', 'texcoord_vector2', 'float2', ['int inputs:index = 0']),
+    node('LeafTint', 'geompropvalue_color3', 'color3f', ['string inputs:geomprop = "displayColor"']),
+    image('SubsurfaceMap', 'subsurface', 'float', 'float'),
+    node('ScatterWeight', 'multiply_float', 'float', [
+      `float inputs:in1.connect = ${out('SubsurfaceMap')}`,
+      `float inputs:in2.connect = <${path}.inputs:subsurfaceStrength>`,
+    ]),
+  ];
+  const surface = [
+    'bool inputs:thin_walled = true',
+    `float inputs:subsurface.connect = ${out('ScatterWeight')}`,
+    `color3f inputs:subsurface_color = ${tuple(...scattering.color.toArray())}`,
+  ];
+  if (textures.color) {
+    nodes.push(image('LeafColor', 'color', 'color3f', 'color3'),
+      node('LeafAlbedo', 'multiply_color3', 'color3f', [
+        `color3f inputs:in1.connect = ${out('LeafColor')}`, `color3f inputs:in2.connect = ${out('LeafTint')}`,
+      ]));
+  }
+  surface.push(`color3f inputs:base_color.connect = ${out(textures.color ? 'LeafAlbedo' : 'LeafTint')}`);
+  if (textures.roughness) {
+    nodes.push(image('LeafRoughness', 'roughness', 'float', 'float'));
+    surface.push(`float inputs:specular_roughness.connect = ${out('LeafRoughness')}`);
+  }
+  if (textures.normal) {
+    nodes.push(image('LeafNormal', 'normal', 'float3', 'vector3'),
+      node('TangentNormal', 'normalmap_float', 'float3', [`float3 inputs:in.connect = ${out('LeafNormal')}`]));
+    surface.push(`float3 inputs:normal.connect = ${out('TangentNormal')}`);
+  }
+  nodes.push(node('LeafSurface', 'standard_surface_surfaceshader', 'token', surface));
+  return `
+        token outputs:mtlx:surface.connect = ${out('LeafSurface')}
+        float inputs:subsurfaceStrength = ${number(scattering.strength)}${nodes.join('')}`;
+}
+
 function material(kind, mesh, textures) {
   const path = '/Tree/Looks/' + kind;
   const tint = mesh.material.color;
@@ -100,6 +150,7 @@ function material(kind, mesh, textures) {
     else if (map === 'roughness') surface[1] = connection;
     else surface.push(connection);
   }
+  if (textures.subsurface) nodes += leafMaterialX(path, textures, mesh.material.leafScattering);
   return `    def Material "${kind}" {
         token outputs:surface.connect = <${path}/Surface.outputs:surface>
         def Shader "Surface" {
@@ -134,8 +185,11 @@ export async function collectTextures(root, files) {
   const textures = {};
   for (const mesh of root.children.filter(child => child.isMesh)) {
     const maps = {};
-    for (const [channel, key] of [['color', 'map'], ['roughness', 'roughnessMap'], ['normal', 'normalMap']]) {
-      const src = mesh.material[key]?.image?.src;
+    for (const [channel, texture] of [
+      ['color', mesh.material.map], ['roughness', mesh.material.roughnessMap],
+      ['normal', mesh.material.normalMap], ['subsurface', mesh.material.leafScattering?.map],
+    ]) {
+      const src = texture?.image?.src;
       if (!src) continue;
       const name = 'textures/' + new URL(src).pathname.split('/').pop();
       const response = await fetch(src);

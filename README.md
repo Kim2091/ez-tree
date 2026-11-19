@@ -17,13 +17,17 @@ Choose a tree preset, then open **Leaves** to adjust leaf shape, density, size, 
 
 The tree, shrub, and trellis presets use metre-scale dimensions. Ash carries pairs of compound leaves, oak grows larger spreading limbs, aspen has a slender pale trunk, and pine branches grow in whorls with lateral sprays of needles. The updated growth model changes the shape produced by earlier seeds. The same seed and settings reproduce a tree within this version.
 
-Each blade has its own root-to-tip UVs for 1024 × 1024 RGB color, normal, and roughness maps. Bark UVs follow branch length through every LOD. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
+Each blade has root-to-tip UVs for 1024 × 1024 color, normal, roughness, and subsurface maps. The grayscale subsurface PNG stores a linear weight. Lighter tissue transmits more diffuse light, and the dark veins and midrib transmit less. Each species has its own map. In **Leaves**, enable **Surface Textures** and adjust **Subsurface Strength** from 0 to 1. The default is 0.65. The effect uses the existing mesh at every LOD.
+
+![The same backlit aspen blade with scattering off and at the default strength](docs/aspen-backlight.jpg)
+
+Bark UVs follow branch length through every LOD. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
 
 ## Optimize a tree
 
 Open **Mesh Optimization** and select the LOD you want to edit. **Fit to Budget** chooses blade resolution, leaf spacing, branch ring spacing, and branch sides for the triangle target. The status reports the actual count, including the trellis when visible. If the target falls below the supported minimum, the tool shows the smallest available result. Use the individual controls to tune the silhouette and inspect each level with the viewport's LOD buttons. **Reset This Level** restores its initial settings. **Save Preset** includes the three sets of mesh settings.
 
-For a fuller crown at a fixed budget, choose **Blade Detail → Thin (denser canopy)**, then **Fit to Budget**. Each ash leaf keeps its five individually textured leaflets and stem in 12 triangles. An oak blade uses 6 triangles, an aspen blade uses 4, and a five-needle pine cluster uses 10. The leaf surfaces render from both sides in the editor, GLB and USD. They retain the color, normal and roughness maps. Full detail gives close-ups finer margins and modeled edge thickness.
+LOD0 defaults to **Full** for close-ups. LOD1 and LOD2 default to **Thin (denser canopy)**. You can override the blade detail on each level or click **Fit to Budget** to fit the selected level. Each thin ash leaf keeps its five individually textured leaflets and stem in 12 triangles. An oak blade uses 6 triangles, an aspen blade uses 4, and a five-needle pine cluster uses 10. Thin blades render from both sides and retain their surface maps. Full detail gives close-ups finer margins and modeled edge thickness.
 
 The shipped Ash Medium seed has 2,589,828 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 385 compound leaves in 24,192 total triangles. Thin blades keep 1,434 compound leaves in 24,992 total triangles. Both fits use one bark mesh and one foliage mesh.
 
@@ -36,8 +40,10 @@ The shipped Ash Medium seed has 2,589,828 triangles at full detail. At a 25,000-
 | GLB (Current Level) | Visible tree geometry, vertex colors, and embedded bark and foliage textures in one binary glTF file |
 | USD (Current Level) | Standalone ASCII OpenUSD stage with indexed meshes, normals, UVs, vertex colors, and opaque preview materials. Bark uses its tint. |
 | GLB LODs (ZIP) | One GLB for each of the three configured levels |
-| USD + Textures (Current Level ZIP) | The selected USD mesh with its bark and foliage color, normal, and roughness images |
+| USD + Textures (Current Level ZIP) | The selected USD mesh with its bark and foliage images, including the leaf subsurface weight PNG |
 | USD LODs + Textures (ZIP) | Three USD stages referencing one shared set of bark and foliage images. Extract either textured ZIP with its directory structure intact. |
+
+GLB embeds the scattering weight using `KHR_materials_diffuse_transmission`. Importers that support the extension apply it automatically. The textured USD ZIPs include a thin-walled MaterialX Standard Surface with its subsurface input connected, plus a universal USD Preview Surface for other viewers. To wire the mask in another engine, import `*_Subsurface.png` as linear data and multiply its red channel by the desired scattering strength. The plain USD export is texture-free.
 
 The models use the tree's rest pose. Wind is animated in the browser preview.
 

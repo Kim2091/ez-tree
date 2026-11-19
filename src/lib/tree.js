@@ -100,7 +100,7 @@ export class Tree extends THREE.Group {
    */
 
   /**
-   * Default levels for generateLODs(). All levels use solid foliage.
+   * Default levels for generateLODs(). Use closed blades nearby and thin blades at distance.
    * @type {LODLevel[]}
    */
   static defaultLODLevels = [
@@ -112,7 +112,7 @@ export class Tree extends THREE.Group {
         sectionStride: 3,
         segmentFactor: 0.75,
         leafStride: 2,
-        leafDetail: 'reduced',
+        leafDetail: 'thin',
         // Slightly under the area-preserving sqrt(2): individual leaves are
         // still resolvable at this distance, so a full compensation reads as
         // "bigger leaves" rather than "same canopy".
@@ -126,7 +126,7 @@ export class Tree extends THREE.Group {
         sectionStride: 6,
         segmentFactor: 0.4,
         leafStride: 4,
-        leafDetail: 'coarse',
+        leafDetail: 'thin',
         leafScale: 1.3,
       },
     },
@@ -173,7 +173,9 @@ export class Tree extends THREE.Group {
     );
 
     ordered.forEach((level, index) => {
-      const buffers = this.#meshSkeleton(level.detail ?? {});
+      const buffers = this.#meshSkeleton({
+        ...level.detail, leafDetail: level.detail?.leafDetail ?? (index === 0 ? 'full' : 'thin'),
+      });
 
       let branchesMesh, leavesMesh;
       if (index === 0) {
@@ -819,8 +821,43 @@ export class Tree extends THREE.Group {
       dithering: true
     });
 
+    if (maps?.subsurface) {
+      const color = { oak: 0xa6bd54, aspen: 0xc1d46b, ash: 0xb0c765, pine: 0x729354 };
+      mat.leafScattering = {
+        map: maps.subsurface,
+        color: new THREE.Color(color[this.options.leaves.type] ?? color.oak).multiply(mat.color),
+        strength: THREE.MathUtils.clamp(this.options.leaves.subsurfaceStrength, 0, 1),
+      };
+      mat.defines.USE_LEAF_SCATTERING = 1;
+    }
+
     // Add custom shader code for branch swaying
     mat.onBeforeCompile = (shader) => {
+      if (mat.leafScattering) {
+        const scattering = mat.leafScattering;
+        shader.uniforms.uLeafSubsurfaceMap = { value: scattering.map };
+        shader.uniforms.uLeafScatterColor = { value: scattering.color };
+        shader.uniforms.uLeafScatterStrength = { get value() { return scattering.strength; } };
+        shader.vertexShader = 'varying vec2 vLeafScatterUv;\n' + shader.vertexShader.replace(
+          '#include <uv_vertex>', '#include <uv_vertex>\n vLeafScatterUv = uv;',
+        );
+        // Each direct light already includes its attenuation and shadow.
+        // Transfer the masked fraction of diffuse energy to the back face.
+        const lights = THREE.ShaderChunk.lights_fragment_begin.replaceAll(
+          'RE_Direct( directLight,',
+          `reflectedLight.directDiffuse += leafScatterWeight * directLight.color * (
+            BRDF_Lambert(uLeafScatterColor) * max(-dot(geometryNormal, directLight.direction), 0.0)
+            - BRDF_Lambert(material.diffuseColor) * max(dot(geometryNormal, directLight.direction), 0.0));
+          RE_Direct( directLight,`,
+        );
+        shader.fragmentShader = `
+          varying vec2 vLeafScatterUv;
+          uniform sampler2D uLeafSubsurfaceMap;
+          uniform vec3 uLeafScatterColor;
+          uniform float uLeafScatterStrength;
+        ` + shader.fragmentShader.replace('#include <lights_fragment_begin>',
+          'float leafScatterWeight = uLeafScatterStrength * texture2D(uLeafSubsurfaceMap, vLeafScatterUv).r;\n' + lights);
+      }
       shader.uniforms.uTime = this.#windTime;
       shader.uniforms.uWindStrength = { value: new THREE.Vector3(0.10, 0, 0.07) };
       shader.uniforms.uWindFrequency = { value: 0.5 };

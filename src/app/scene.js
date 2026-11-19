@@ -102,7 +102,7 @@ export async function createScene(renderer) {
     t.options.seed = 10000 * Math.random();
     // The scenery stays outside the editing area. Only allocate its distant mesh.
     t.generateLODs([{ distance: 0, detail: {
-      sectionStride: 6, segmentFactor: 0.4, leafStride: 10, leafScale: 1.4, leafDetail: 'coarse',
+      ...Tree.defaultLODLevels.at(-1).detail, leafStride: 10, leafScale: 1.4,
     } }]);
     t.castShadow = true;
     t.receiveShadow = true;

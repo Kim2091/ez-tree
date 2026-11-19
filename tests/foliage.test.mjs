@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DoubleSide, FrontSide, Vector2, Vector3 } from 'three';
+import { DoubleSide, FrontSide, ShaderLib, Texture, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
 
 test('the full, reduced and coarse blades enclose a volume', () => {
@@ -129,6 +129,40 @@ test('mixed LODs render both sides of thin leaves and share the same wind time',
   tree.generate();
   assert.equal(disposed, 1);
   assert.equal(tree.leavesMesh.material.side, FrontSide);
+});
+
+test('only the closest LOD defaults to full blades and explicit overrides win', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 0;
+  const sides = () => tree.lod.levels.map(level => level.object.children[1].material.side);
+  tree.generateLODs();
+  assert.deepEqual(sides(), [FrontSide, DoubleSide, DoubleSide]);
+  tree.generateLODs([{ distance: 60 }, { distance: 10 }, { distance: 100, detail: { leafDetail: 'coarse' } }]);
+  assert.deepEqual(sides(), [FrontSide, DoubleSide, FrontSide]);
+});
+
+test('leaf scattering follows the material across LODs and can be disabled without changing topology', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 0;
+  tree.options.leaves.maps.subsurface = new Texture();
+  tree.options.leaves.textured = true;
+  tree.generateLODs();
+  for (const { object } of tree.lod.levels) {
+    const mat = object.children[1].material;
+    const shader = { ...ShaderLib.standard, uniforms: {} };
+    mat.onBeforeCompile(shader);
+    assert.equal(shader.uniforms.uLeafSubsurfaceMap.value, tree.options.leaves.maps.subsurface);
+    mat.leafScattering.strength = 0;
+    assert.equal(shader.uniforms.uLeafScatterStrength.value, 0);
+    assert.equal(mat.transparent, false);
+    assert.equal(mat.alphaTest, 0);
+    assert.equal(object.children[0].material.leafScattering, undefined);
+  }
+  const count = tree.leavesMesh.geometry.index.count;
+  tree.options.leaves.textured = false;
+  tree.generate();
+  assert.equal(tree.leavesMesh.material.leafScattering, undefined);
+  assert.equal(tree.leavesMesh.geometry.index.count, count);
 });
 
 test('bark UVs follow the trunk and retain the same coordinates when rings are skipped', () => {

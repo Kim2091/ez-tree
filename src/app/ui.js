@@ -7,9 +7,11 @@ import { Environment } from './environment';
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { version } from '../../package.json';
 import { collectTextures, exportUSD } from './usd';
+import { leafDiffuseTransmission } from './leaf-gltf';
 import { frameTree } from './scene';
 
 const exporter = new GLTFExporter();
+exporter.register(leafDiffuseTransmission);
 
 function defaultDetails() {
   return Tree.defaultLODLevels.map(({ detail }) => ({
@@ -965,6 +967,14 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   leavesSection.add(leafTextures);
   controls.push({ control: leafTextures, update: () => leafTextures.setValue(tree.options.leaves.textured) });
 
+  const scattering = createSlider('Subsurface Strength', tree.options.leaves.subsurfaceStrength, 0, 1, 0.01, value => {
+    tree.options.leaves.subsurfaceStrength = value;
+    const surface = tree.leavesMesh.material.leafScattering;
+    if (surface) surface.strength = value;
+  });
+  leavesSection.add(scattering);
+  controls.push({ control: scattering, update: () => scattering.setValue(tree.options.leaves.subsurfaceStrength) });
+
   const leafTintPicker = createColorPicker('Tint', tree.options.leaves.tint, (val) => {
     tree.options.leaves.tint = val;
     onChange();
@@ -1222,6 +1232,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     group.name = 'Tree';
     for (const mesh of [tree.branchesMesh, tree.leavesMesh]) {
       const snapshot = new THREE.Mesh(mesh.geometry, mesh.material.clone());
+      if (mesh.material.leafScattering) snapshot.material.leafScattering = { ...mesh.material.leafScattering };
       snapshot.name = mesh.material.name === 'leaves' ? 'Leaves' : 'Branches';
       group.add(snapshot);
     }

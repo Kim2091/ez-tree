@@ -43,6 +43,7 @@ def leaf(species, seed, veins):
         relief = rib * 0.9 + 0.4 * rib * pores
         pigment = (212 + 23 * broad + 13 * fine + 18 * rib + 16 * rib * pores)[..., None]
         pigment = pigment * np.array([0.94, 1, 0.99])
+        scatter = 0.32 + 0.10 * broad + 0.07 * fine - 0.12 * rib
     else:
         # Build the secondary and tertiary veins in blade coordinates. Start
         # both sides on the midrib and taper the lines toward the margin.
@@ -77,6 +78,11 @@ def leaf(species, seed, veins):
         nearest = cKDTree(seeds).query(domain.reshape(-1, 2), k=2)[0]
         network = np.exp(-(np.diff(nearest, axis=1).reshape(u.shape) / 0.082) ** 2)
         relief = 2.9 * midrib + 1.65 * secondary + 0.28 * network
+        # Relative diffuse transmission. Use the exact vascular fields that
+        # form the normal map so thick veins stay dark when backlit.
+        tissue = {"oak": 0.64, "aspen": 0.83, "ash": 0.74}[species]
+        scatter = tissue + 0.12 * broad + 0.045 * fine + 0.06 * v
+        scatter -= 0.52 * midrib + 0.28 * secondary + 0.07 * network
         pigment = (212 + 34 * broad + 12 * fine + 9 * network + 21 * secondary)[..., None]
         pigment = pigment * np.array([0.97, 1.015, 0.95])
         pigment += (midrib + 0.6 * secondary)[..., None] * np.array([40, 20, 13])
@@ -89,7 +95,10 @@ def leaf(species, seed, veins):
     pigment += grain[..., None] * 1.7
     height = relief + 0.15 * fine + 0.022 * grain
     roughness = 0.60 + 0.11 * broad + 0.08 * fine + 0.045 * relief
-    save_maps(PUBLIC / "foliage" / species, pigment, height, roughness)
+    base = PUBLIC / "foliage" / species
+    save_maps(base, pigment, height, roughness)
+    mask = np.rint(255 * np.clip(scatter, 0, 1)).astype(np.uint8)
+    Image.fromarray(mask).save(base.with_name(species + "_Subsurface.png"))
 
 
 def aspen_bark():

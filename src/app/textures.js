@@ -22,11 +22,13 @@ const textureLoader = new THREE.TextureLoader();
 const sets = new Map();
 const ready = new WeakMap();
 
-function surfaceMaps(base) {
+function surfaceMaps(base, foliage = false) {
   if (sets.has(base)) return sets.get(base);
   const maps = {};
-  for (const [channel, suffix] of [['color', 'Color'], ['normal', 'NormalGL'], ['roughness', 'Roughness']]) {
-    const url = base + '_' + suffix + '.jpg';
+  const channels = [['color', 'Color.jpg'], ['normal', 'NormalGL.jpg'], ['roughness', 'Roughness.jpg']];
+  if (foliage) channels.push(['subsurface', 'Subsurface.png']);
+  for (const [channel, file] of channels) {
+    const url = base + '_' + file;
     let texture;
     const loaded = new Promise(resolve => {
       texture = textureLoader.load(url, () => resolve(true), undefined, () => {
@@ -36,7 +38,7 @@ function surfaceMaps(base) {
       });
     });
     if (channel === 'color') texture.colorSpace = THREE.SRGBColorSpace;
-    if (channel !== 'normal') texture.userData.mimeType = 'image/jpeg';
+    if (channel === 'color' || channel === 'roughness') texture.userData.mimeType = 'image/jpeg';
     texture.anisotropy = 4;
     maps[channel] = texture;
     ready.set(texture, loaded);
@@ -48,6 +50,11 @@ function surfaceMaps(base) {
 // The user can export immediately after changing species. Wait for the maps
 // attached to this export snapshot, including any still being decoded.
 export async function prepareExportMaterial(material) {
+  const scattering = material.leafScattering;
+  if (scattering?.map) {
+    await ready.get(scattering.map);
+    if (!scattering.map.image) scattering.map = null;
+  }
   for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
     const map = material[key];
     if (!map) continue;
@@ -62,7 +69,7 @@ export function applyTreeTextures(tree) {
   const dir = barkType + '_1K-JPG';
   Object.assign(bark.maps, surfaceMaps('/textures/bark/' + dir + '/' + dir));
   const shape = Object.values(LeafType).includes(leaf.type) ? leaf.type : LeafType.Oak;
-  Object.assign(leaf.maps, surfaceMaps('/textures/foliage/' + shape));
+  Object.assign(leaf.maps, surfaceMaps('/textures/foliage/' + shape, true));
 }
 
 /**
