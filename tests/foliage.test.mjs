@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DoubleSide, FrontSide, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
 
-test('the surface of each blade or needle encloses a volume at every resolution', () => {
+test('the full, reduced and coarse blades enclose a volume', () => {
   for (const type of Object.values(LeafType)) {
     for (const leafDetail of ['full', 'reduced', 'coarse']) {
       const tree = new Tree();
@@ -58,17 +59,76 @@ test('large meshes keep valid indices and regenerate exactly at the same seed', 
   assert.equal(tree.leavesMesh.geometry.index.count, 0);
 });
 
-test('each shipped preset fits the budget, including its visible trellis', () => {
+test('each shipped preset fits the budget with closed or thin blades, including its visible trellis', () => {
   for (const preset of Object.keys(TreePreset)) {
     const tree = new Tree();
     tree.loadPreset(preset);
     const target = 25000;
-    const detail = tree.fitTriangleBudget(target);
-    const { branches, leaves } = tree.createGeometry(detail);
-    let triangles = (branches.index.count + leaves.index.count) / 3;
-    tree.trellisMesh?.traverseVisible(mesh => { if (mesh.isMesh) triangles += mesh.geometry.index.count / 3; });
-    assert(triangles <= target && leaves.index.count > 0, preset);
+    for (const thinLeaves of [false, true]) {
+      const detail = tree.fitTriangleBudget(target, { thinLeaves });
+      const { branches, leaves } = tree.createGeometry(detail);
+      let triangles = (branches.index.count + leaves.index.count) / 3;
+      tree.trellisMesh?.traverseVisible(mesh => { if (mesh.isMesh) triangles += mesh.geometry.index.count / 3; });
+      assert(triangles <= target && leaves.index.count > 0, preset);
+      assert.equal(leaves.userData.doubleSided, thinLeaves);
+      if (preset === 'Ash Medium') {
+        assert.equal(leaves.userData.leafSites, thinLeaves ? 1434 : 385);
+        assert.equal(triangles, thinLeaves ? 24992 : 24192);
+      }
+    }
   }
+});
+
+test('thin blades have opaque textured surfaces, usable normals and species-specific outlines', () => {
+  const costs = { ash: 12, oak: 6, aspen: 4, pine: 10 };
+  for (const [type, triangles] of Object.entries(costs)) {
+    const tree = new Tree();
+    tree.options.leaves.type = type;
+    tree.options.branch.levels = 0;
+    tree.options.leaves.count = 10;
+    tree.generate({ leafDetail: 'thin', leafStride: 1.72 });
+    const { geometry: g, material } = tree.leavesMesh;
+    const count = Math.ceil(tree.skeleton.leaves.length / 1.72);
+    assert.equal(g.userData.leafSites, count);
+    assert.equal(g.index.count / 3, count * triangles);
+    assert.equal(material.side, DoubleSide);
+    assert.equal(material.transparent, false);
+    assert.equal(material.alphaTest, 0);
+    const { position, normal, uv, leafFlex } = g.attributes;
+    for (let i = 0; i < g.index.count; i += 3) {
+      const ids = [0, 1, 2].map(j => g.index.getX(i + j));
+      const [a, b, c] = ids.map(id => new Vector3().fromBufferAttribute(position, id));
+      const [u, v, w] = ids.map(id => new Vector2().fromBufferAttribute(uv, id));
+      assert(b.sub(a).cross(c.sub(a)).lengthSq() > 0, type);
+      assert(v.sub(u).cross(w.sub(u)) > 0, type);
+    }
+    for (let i = 0; i < normal.count; i++) {
+      assert(Math.abs(new Vector3().fromBufferAttribute(normal, i).length() - 1) < 0.00001);
+    }
+    const bladeRoots = Array.from({ length: uv.count / count }, (_, i) => i).filter(i => uv.getY(i) === 0);
+    assert.equal(bladeRoots.length, { ash: 6, oak: 1, aspen: 1, pine: 5 }[type]);
+    assert.equal(leafFlex.getX(0), 0);
+    assert.deepEqual(tree.createGeometry({ leafDetail: 'thin', leafStride: 1.72 }).leaves.attributes.position.array, position.array);
+  }
+});
+
+test('mixed LODs render both sides of thin leaves and share the same wind time', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 0;
+  tree.generateLODs(['full', 'thin', 'thin'].map((leafDetail, distance) => ({ distance, detail: { leafDetail } })));
+  const materials = tree.lod.levels.map(level => level.object.children[1].material);
+  assert.deepEqual(materials.map(m => m.side), [FrontSide, DoubleSide, DoubleSide]);
+  assert.equal(materials[1], materials[2]);
+  for (const material of new Set(materials)) {
+    material.onBeforeCompile({ uniforms: {}, vertexShader: '' });
+  }
+  tree.update(3);
+  for (const material of materials) assert.equal(material.userData.shader.uniforms.uTime.value, 3);
+  let disposed = 0;
+  materials[1].addEventListener('dispose', () => disposed++);
+  tree.generate();
+  assert.equal(disposed, 1);
+  assert.equal(tree.leavesMesh.material.side, FrontSide);
 });
 
 test('bark UVs follow the trunk and retain the same coordinates when rings are skipped', () => {

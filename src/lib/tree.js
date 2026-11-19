@@ -40,6 +40,7 @@ export class Tree extends THREE.Group {
    * @type {Branch[]}
    */
   branchQueue = [];
+  #windTime = { value: 0 };
 
   /**
    * @param {TreeOptions} params
@@ -58,10 +59,7 @@ export class Tree extends THREE.Group {
   }
 
   update(elapsedTime) {
-    const leafShader = this.leavesMesh.material.userData.shader;
-    if (leafShader) {
-      leafShader.uniforms.uTime.value = elapsedTime;
-    }
+    this.#windTime.value = elapsedTime;
   }
 
   /**
@@ -88,8 +86,8 @@ export class Tree extends THREE.Group {
    *   first and last rings are always kept so branch endpoints stay put
    * @property {number} [segmentFactor=1] Radial segment multiplier;
    *   segments = max(3, round(segmentCount * segmentFactor))
-   * @property {number} [leafStride=1] Keep every Nth leaf
-   * @property {string} [leafDetail='full'] Blade resolution: full, reduced or coarse
+   * @property {number} [leafStride=1] Average spacing between retained leaf sites
+   * @property {string} [leafDetail='full'] Blade resolution: full, reduced, coarse or thin
    * @property {number} [leafScale=1] Size multiplier for the kept leaves,
    *   typically 1/sqrt(kept fraction) to preserve canopy coverage
    */
@@ -154,8 +152,8 @@ export class Tree extends THREE.Group {
   /**
    * Generates the tree as a set of levels of detail hosted in a THREE.LOD
    * object inside this group. The renderer switches levels automatically
-   * based on camera distance. All levels share one bark and one leaf
-   * material, so update() animates wind at every level.
+   * based on camera distance. Levels share materials by sidedness and use
+   * the same wind time uniform.
    * @param {LODLevel[]} levels Level descriptors, in any order
    */
   generateLODs(levels = Tree.defaultLODLevels) {
@@ -163,7 +161,7 @@ export class Tree extends THREE.Group {
     this.#generateSkeleton();
 
     const barkMaterial = this.#createBarkMaterial();
-    const leafMaterial = this.#createLeafMaterial();
+    const leafMaterials = new Map();
 
     this.lod = new THREE.LOD();
     this.lod.name = 'TreeLOD';
@@ -197,7 +195,9 @@ export class Tree extends THREE.Group {
       branchesMesh.geometry = this.#buildBufferGeometry(buffers.branches);
       branchesMesh.material = barkMaterial;
       leavesMesh.geometry = this.#buildBufferGeometry(buffers.leaves);
-      leavesMesh.material = leafMaterial;
+      const twoSided = buffers.leaves.doubleSided;
+      if (!leafMaterials.has(twoSided)) leafMaterials.set(twoSided, this.#createLeafMaterial(twoSided));
+      leavesMesh.material = leafMaterials.get(twoSided);
 
       for (const mesh of [branchesMesh, leavesMesh]) {
         mesh.castShadow = true;
@@ -239,14 +239,19 @@ export class Tree extends THREE.Group {
   #clearLOD() {
     if (!this.lod) return;
 
+    const extraMaterials = new Set();
     this.lod.levels.forEach((level) => {
       for (const mesh of level.object.children) {
         // One level reuses branchesMesh/leavesMesh; their geometry and the
         // shared materials are disposed by whichever generate path runs next.
         if (mesh === this.branchesMesh || mesh === this.leavesMesh) continue;
         mesh.geometry.dispose();
+        if (mesh.material !== this.leavesMesh.material && mesh.material !== this.branchesMesh.material) {
+          extraMaterials.add(mesh.material);
+        }
       }
     });
+    for (const material of extraMaterials) material.dispose();
 
     this.remove(this.lod);
     this.lod = null;
@@ -294,7 +299,7 @@ export class Tree extends THREE.Group {
   #meshSkeleton(detail = {}) {
     const sectionStride = Math.max(1, Math.floor(detail.sectionStride ?? 1));
     const segmentFactor = detail.segmentFactor ?? 1;
-    const leafStride = Math.max(1, Math.floor(detail.leafStride ?? 1));
+    const leafStride = Math.max(1, detail.leafStride ?? 1);
     const leafScale = detail.leafScale ?? 1;
 
     const branches = {
@@ -318,13 +323,15 @@ export class Tree extends THREE.Group {
    * of each candidate before allocating any vertex buffers. When the target
    * is below the smallest supported mesh, return the lowest-cost result.
    * @param {number} target Maximum triangles, including any visible trellis
+   * @param {{thinLeaves?: boolean}} options Use thin blades to retain more occupied leaf sites
    * @returns {LODDetail}
    */
-  fitTriangleBudget(target) {
+  fitTriangleBudget(target, { thinLeaves = false } = {}) {
     if (!this.skeleton) this.#generateSkeleton();
     let fixed = 0;
     this.trellisMesh?.traverseVisible(o => { if (o.isMesh) fixed += o.geometry.index.count / 3; });
     const count = this.skeleton.leaves.length;
+    const bladeDetails = thinLeaves ? ['thin'] : ['full', 'reduced', 'coarse'];
     let best, bestExcess = Infinity, bestPenalty = Infinity;
     for (const sectionStride of [1, 2, 3, 4, 6, 8, 16]) {
       for (const segmentFactor of [1, 0.75, 0.5, 0.25]) {
@@ -333,10 +340,11 @@ export class Tree extends THREE.Group {
           const spans = Math.ceil((sections.length - 1) / sectionStride);
           branches += 2 * spans * Math.max(3, Math.round(segmentCount * segmentFactor));
         }
-        for (const [tier, leafDetail] of ['full', 'reduced', 'coarse'].entries()) {
+        for (const [tier, leafDetail] of bladeDetails.entries()) {
           const cost = trianglesPerLeaf(this.options.leaves.type, leafDetail);
           const capacity = Math.max(1, Math.floor((target - branches) / cost));
-          const leafStride = Math.min(128, Math.max(1, Math.ceil(count / capacity)));
+          const precision = thinLeaves ? 100 : 1;
+          const leafStride = Math.min(128, Math.max(1, Math.ceil(count * precision / capacity) / precision));
           const total = branches + Math.ceil(count / leafStride) * cost;
           const excess = Math.max(0, total - target);
           // Prefer preserving occupied leaf sites before spending on blade detail.
@@ -346,7 +354,8 @@ export class Tree extends THREE.Group {
             bestExcess = excess;
             bestPenalty = penalty;
             best = { sectionStride, segmentFactor, leafStride, leafDetail,
-              leafScale: Math.min(1.5, Math.pow(leafStride, 0.25)) };
+              leafScale: thinLeaves ? Math.min(1.65, Math.sqrt(leafStride))
+                : Math.min(1.5, Math.pow(leafStride, 0.25)) };
           }
         }
       }
@@ -727,7 +736,11 @@ export class Tree extends THREE.Group {
     g.setAttribute('normal', attribute(buffers.normals, 3));
     g.setAttribute('uv', attribute(buffers.uvs, 2));
     if (buffers.colors) g.setAttribute('color', attribute(buffers.colors, 3));
-    if (buffers.flex) g.setAttribute('leafFlex', attribute(buffers.flex, 1));
+    if (buffers.flex) {
+      g.setAttribute('leafFlex', attribute(buffers.flex, 1));
+      g.userData.leafSites = buffers.leafSites;
+      g.userData.doubleSided = buffers.doubleSided;
+    }
     // Three chooses 16- or 32-bit indices for ordinary branch index arrays.
     g.setIndex(Array.isArray(buffers.indices)
       ? buffers.indices : new THREE.BufferAttribute(buffers.indices, 1));
@@ -789,10 +802,11 @@ export class Tree extends THREE.Group {
    * the current options
    * @returns {THREE.MeshStandardMaterial}
    */
-  #createLeafMaterial() {
+  #createLeafMaterial(doubleSided) {
     const maps = this.options.leaves.textured ? this.options.leaves.maps : null;
     const mat = new THREE.MeshStandardMaterial({
       name: 'leaves',
+      side: doubleSided ? THREE.DoubleSide : THREE.FrontSide,
       vertexColors: true,
       map: maps?.color ?? null,
       normalMap: maps?.normal ?? null,
@@ -807,7 +821,7 @@ export class Tree extends THREE.Group {
 
     // Add custom shader code for branch swaying
     mat.onBeforeCompile = (shader) => {
-      shader.uniforms.uTime = { value: 0 };
+      shader.uniforms.uTime = this.#windTime;
       shader.uniforms.uWindStrength = { value: new THREE.Vector3(0.10, 0, 0.07) };
       shader.uniforms.uWindFrequency = { value: 0.5 };
       shader.uniforms.uWindScale = { value: 70 };
@@ -940,7 +954,7 @@ export class Tree extends THREE.Group {
 
       // Non-enumerable so JSON serialization (e.g. GLTFExporter's userData
       // pass) skips the live shader object — Texture uniforms inside it are
-      // not serializable. update() still reads userData.shader normally.
+      // not serializable.
       Object.defineProperty(mat.userData, 'shader', {
         value: shader,
         configurable: true,
@@ -958,7 +972,7 @@ export class Tree extends THREE.Group {
     this.leavesMesh.geometry.dispose();
     this.leavesMesh.geometry = this.#buildBufferGeometry(this.leaves);
     this.leavesMesh.material.dispose();
-    this.leavesMesh.material = this.#createLeafMaterial();
+    this.leavesMesh.material = this.#createLeafMaterial(this.leaves.doubleSided);
     this.leavesMesh.castShadow = true;
     this.leavesMesh.receiveShadow = true;
   }

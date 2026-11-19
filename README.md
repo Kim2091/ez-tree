@@ -1,6 +1,6 @@
 # EZ-Tree mesh leaf generator
 
-A local edition of Daniel Greenheck's EZ-Tree. Oak has lobed blades, aspen has rounded blades, ash has paired leaflets on a stem, and pine has clusters of individual needles. Each blade has a closed cross-section, a modeled tip, and opaque vertex colors. Every LOD uses this geometry.
+A local edition of Daniel Greenheck's EZ-Tree. Oak has lobed blades, aspen has rounded blades, ash has paired leaflets on a stem, and pine has clusters of individual needles. All leaf silhouettes are modeled in opaque geometry. Each LOD can use closed blades or lightweight, two-sided blades.
 
 ![Rendered ash, oak, aspen, and pine presets with close-ups of oak foliage and aspen bark](docs/tree-surfaces.jpg)
 
@@ -23,7 +23,11 @@ Each blade has its own root-to-tip UVs for 1024 × 1024 RGB color, normal, and r
 
 Open **Mesh Optimization** and select the LOD you want to edit. **Fit to Budget** chooses blade resolution, leaf spacing, branch ring spacing, and branch sides for the triangle target. The status reports the actual count, including the trellis when visible. If the target falls below the supported minimum, the tool shows the smallest available result. Use the individual controls to tune the silhouette and inspect each level with the viewport's LOD buttons. **Reset This Level** restores its initial settings. **Save Preset** includes the three sets of mesh settings.
 
-The shipped Ash Medium seed has 2,589,828 triangles at full detail. A 25,000-triangle target produces 24,192 triangles. The tree batches the bark and foliage into one indexed mesh each.
+For a fuller crown at a fixed budget, choose **Blade Detail → Thin (denser canopy)**, then **Fit to Budget**. Each ash leaf keeps its five individually textured leaflets and stem in 12 triangles. An oak blade uses 6 triangles, an aspen blade uses 4, and a five-needle pine cluster uses 10. The leaf surfaces render from both sides in the editor, GLB and USD. They retain the color, normal and roughness maps. Full detail gives close-ups finer margins and modeled edge thickness.
+
+The shipped Ash Medium seed has 2,589,828 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 385 compound leaves in 24,192 total triangles. Thin blades keep 1,434 compound leaves in 24,992 total triangles. Both fits use one bark mesh and one foliage mesh.
+
+![Same Ash Medium tree and camera at a 25,000-triangle budget, with standard leaves on the left and thin leaves on the right](docs/ash-leaf-budget.jpg)
 
 ## Export
 
@@ -89,11 +93,11 @@ tree.generateLODs([
 ]);
 ```
 
-All LOD levels share one bark material and one leaf material, so `tree.update(time)` animates wind at every level. Calling `generate()` afterwards tears the LOD down and restores the single full-detail mesh pair (note that exporting a tree generated with `generateLODs()` to GLB will include every level).
+LOD levels share one bark material and one leaf material per sidedness. `tree.update(time)` animates wind at every level. Calling `generate()` afterwards tears the LOD down and restores the single full-detail mesh pair (exporting a tree generated with `generateLODs()` to GLB includes every level).
 
-If you have your own LOD or instancing system, `tree.createGeometry(detail)` returns raw `{ branches, leaves }` `BufferGeometry` pairs at any detail level without touching the tree's own meshes.
+If you have your own LOD or instancing system, `tree.createGeometry(detail)` returns raw `{ branches, leaves }` `BufferGeometry` pairs at any detail level without touching the tree's own meshes. Use `THREE.DoubleSide` on your leaf material when `leaves.userData.doubleSided` is true. Read `leaves.userData.leafSites` for the retained count.
 
-To fit a specific budget from code, call `tree.fitTriangleBudget(25000)` and pass the returned detail settings to `tree.createGeometry(detail)` or `tree.generate(detail)`. Run the regression checks with `npm test`.
+To fit a specific budget from code, call `tree.fitTriangleBudget(25000)` for closed blades or `tree.fitTriangleBudget(25000, { thinLeaves: true })` for thin blades. Pass the returned settings to `tree.createGeometry(detail)` or `tree.generate(detail)`. Run the regression checks with `npm test`.
 
 # Running App with Docker
 

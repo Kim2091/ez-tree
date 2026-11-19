@@ -591,6 +591,15 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     return btn;
   });
 
+  function setLeafGeometry(mesh, geometry) {
+    mesh.geometry = geometry;
+    const side = geometry.userData.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+    if (mesh.material.side !== side) {
+      mesh.material.side = side;
+      mesh.material.needsUpdate = true;
+    }
+  }
+
   function applyLODPreview() {
     const detail = details[previewLevel];
     const t0 = performance.now();
@@ -599,7 +608,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     tree.branchesMesh.geometry.dispose();
     tree.branchesMesh.geometry = branches;
     tree.leavesMesh.geometry.dispose();
-    tree.leavesMesh.geometry = leaves;
+    setLeafGeometry(tree.leavesMesh, leaves);
   }
 
   function setPreviewLevel(level) {
@@ -690,11 +699,12 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     applyLODPreview();
     updateInfoDisplays();
   }
-  const leafDetail = createSelect('Blade Detail', { Full: 'full', Reduced: 'reduced', Coarse: 'coarse' },
+  const bladeOptions = { Full: 'full', Reduced: 'reduced', Coarse: 'coarse', 'Thin (denser canopy)': 'thin' };
+  const leafDetail = createSelect('Blade Detail', bladeOptions,
     'full', value => editDetail('leafDetail', value));
   optimization.add(leafDetail);
   for (const [key, label, min, max, step] of [
-    ['leafStride', 'Keep Every Nth Leaf', 1, 128, 1],
+    ['leafStride', 'Leaf Spacing (sites)', 1, 128, 0.01],
     ['leafScale', 'Leaf Scale', 0.5, 2, 0.01],
     ['sectionStride', 'Branch Ring Step', 1, 16, 1],
     ['segmentFactor', 'Branch Sides Factor', 0.25, 1, 0.05],
@@ -705,7 +715,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   }
   optimization.add(createSlider('Triangle Budget', budget, 100, 1000000, 100, value => { budget = value; }));
   optimization.add(createButton('Fit to Budget', 'cube', () => {
-    details[previewLevel] = tree.fitTriangleBudget(budget);
+    const thinLeaves = details[previewLevel].leafDetail === 'thin';
+    details[previewLevel] = tree.fitTriangleBudget(budget, { thinLeaves });
     fitTarget = budget;
     applyLODPreview();
     refreshOptimization();
@@ -1165,7 +1176,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   function updateInfoDisplays() {
     const { vertices, triangles } = displayedCounts();
     fitStatus.textContent = fitTarget === null ? '' : triangles <= fitTarget
-      ? `${triangles.toLocaleString()} of ${fitTarget.toLocaleString()} triangles`
+      ? `${triangles.toLocaleString()} of ${fitTarget.toLocaleString()} triangles · ${tree.leavesMesh.geometry.userData.leafSites.toLocaleString()} leaf sites`
       : `Smallest available mesh: ${triangles.toLocaleString()} triangles`;
     vertexDisplay.setValue(vertices);
     triangleDisplay.setValue(triangles);
@@ -1259,7 +1270,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
       await paint();
       const { branches, leaves } = source.createGeometry(detail);
       model.children[0].geometry = branches;
-      model.children[1].geometry = leaves;
+      setLeafGeometry(model.children[1], leaves);
       try {
         const data = format === 'usd' ? await exportUSD(model, textures).arrayBuffer()
           : await exporter.parseAsync(model, { binary: true });
@@ -1367,7 +1378,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
                 step === 1 ? Math.round(saved[key]) : saved[key], min, max,
               );
             }
-            if (['full', 'reduced', 'coarse'].includes(saved.leafDetail)) detail.leafDetail = saved.leafDetail;
+            if (Object.values(bladeOptions).includes(saved.leafDetail)) detail.leafDetail = saved.leafDetail;
           }
           tree.options.copy(preset);
           applyTreeTextures(tree);

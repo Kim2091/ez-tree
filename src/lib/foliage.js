@@ -22,6 +22,16 @@ const leaflet = [[0.08, 0.017], [0.21, 0.098], [0.35, 0.142], [0.48, 0.153],
 const stalk = [[0.05, 0.014], [0.60, 0.010], [0.93, 0.006]];
 const needle = [[0.08, 0.020], [0.52, 0.017], [0.83, 0.010]];
 
+// Outline samples for the two-sided mesh. Keep two oak lobes, the aspen
+// shoulder, opposite ash leaflets and the full five-needle fascicle.
+const thinStations = new Map([
+  [oak, [oak[9], oak[11], oak[19]]],
+  [aspen, [aspen[3], aspen[7]]],
+  [leaflet, [leaflet[3]]],
+  [stalk, [stalk[0]]],
+  [needle, [needle[0]]],
+]);
+
 function makeTemplate(type, detail, variant) {
   const positions = [], colors = [], indices = [], uvs = [];
   const color = new THREE.Color({
@@ -64,6 +74,29 @@ function makeTemplate(type, detail, variant) {
 
     const softEdge = broad && detail === 'full';
     const root = vertex(0, 0, 0, 0.68);
+    if (detail === 'thin') {
+      const tip = vertex(0, 1, profile === stalk ? 0 : -0.065, 1.04);
+      const stations = thinStations.get(profile);
+      let previous;
+      for (const [y, width] of stations) {
+        const bend = profile === stalk ? 0 : 0.085 * Math.sin(Math.PI * y) - 0.065 * y * y;
+        const left = vertex(-width, y, bend, 0.93);
+        const right = vertex(width, y, bend + width * y * 0.1, 0.96);
+        if (stations.length === 1) {
+          // Join along the midrib so the two halves catch light differently.
+          indices.push(root, right, tip, root, tip, left);
+          return;
+        }
+        if (previous) {
+          indices.push(previous.left, previous.right, right, previous.left, right, left);
+        } else {
+          indices.push(root, right, left);
+        }
+        previous = { left, right };
+      }
+      indices.push(previous.left, previous.right, tip);
+      return;
+    }
     let previous;
     // Keep the blade's broadest station when reducing its longitudinal rings.
     const widest = profile.reduce((best, row) => row[1] > best[1] ? row : best);
@@ -130,7 +163,7 @@ function makeTemplate(type, detail, variant) {
 }
 
 const templates = new Map();
-for (const detail of ['full', 'reduced', 'coarse']) {
+for (const detail of ['full', 'reduced', 'coarse', 'thin']) {
   templates.set(detail, new Map(Object.values(LeafType).map(type => [
     type, [-1, -0.5, 0, 0.5, 1].map(variant => makeTemplate(type, detail, variant)),
   ])));
@@ -177,9 +210,12 @@ export function meshFoliage(placements, type, stride, scale, detail) {
   const orientation = new THREE.Quaternion();
   const point = new THREE.Vector3();
 
+  // Fractional spacing uses the entire site range, including the final twig.
+  const spacing = Number.isInteger(stride) ? stride : placements.length / count;
   for (let k = 0; k < count; k++) {
-    const first = k * stride;
-    const i = stride === 1 ? first : retainedSite(first, Math.min(first + stride, placements.length));
+    const first = Math.floor(k * spacing);
+    const end = k === count - 1 ? placements.length : Math.floor((k + 1) * spacing);
+    const i = stride === 1 ? first : retainedSite(first, end);
     const leaf = placements[i];
     const start = k * perLeaf;
     orientation.setFromEuler(leaf.orientation);
@@ -204,5 +240,5 @@ export function meshFoliage(placements, type, stride, scale, detail) {
       indices[firstIndex + j] = start + template.indices[j];
     }
   }
-  return { verts, normals, uvs, colors, indices, flex };
+  return { verts, normals, uvs, colors, indices, flex, leafSites: count, doubleSided: detail === 'thin' };
 }

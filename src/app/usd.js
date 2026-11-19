@@ -1,3 +1,5 @@
+import { DoubleSide } from 'three';
+
 // ASCII layers are valid .usd files. Keep the mesh indexed and write arrays
 // in chunks so exporting a dense canopy does not build one string per vertex
 // for the lifetime of the stage.
@@ -25,6 +27,7 @@ function writeMesh(parts, mesh, name, kind, textures) {
   parts.push(`    def Mesh "${name}" (prepend apiSchemas = ["MaterialBindingAPI"])\n    {\n`);
   parts.push(`        rel material:binding = </Tree/Looks/${kind}>\n`);
   parts.push('        uniform token subdivisionScheme = "none"\n');
+  if (mesh.material.side === DoubleSide) parts.push('        uniform bool doubleSided = true\n');
   const matrix = mesh.matrixWorld.elements;
   const rows = [0, 4, 8, 12].map(i => tuple(...matrix.slice(i, i + 4)));
   parts.push('        matrix4d xformOp:transform = (' + rows.join(', ') + ')\n');
