@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/Addons.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+import dracoWasm from 'three/examples/jsm/libs/draco/gltf/draco_decoder.wasm?url';
+import dracoWrapper from 'three/examples/jsm/libs/draco/gltf/draco_wasm_wrapper.js?url';
+import dracoJS from 'three/examples/jsm/libs/draco/gltf/draco_decoder.js?url';
 
 let loaded = false;
 let _rock1Mesh = null;
@@ -16,8 +19,13 @@ async function fetchAssets() {
 
   const gltfLoader = new GLTFLoader();
 
-  const dracoLoader = new DRACOLoader();
-  dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+  const decoders = {
+    'draco_decoder.wasm': dracoWasm,
+    'draco_wasm_wrapper.js': dracoWrapper,
+    'draco_decoder.js': dracoJS,
+  };
+  const manager = new THREE.LoadingManager().setURLModifier(url => decoders[url] ?? url);
+  const dracoLoader = new DRACOLoader(manager);
   gltfLoader.setDRACOLoader(dracoLoader);
 
   _rock1Mesh = (await gltfLoader.loadAsync('/models/rock1.glb')).scene.children[0];

@@ -1,13 +1,29 @@
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { zipSync } from 'three/addons/libs/fflate.module.js';
-import { Billboard, TreePreset, Tree, TreeType } from '@dgreenheck/ez-tree';
-import { BarkType, LeafType, applyTreeTextures, loadPresetWithTextures } from './textures';
+import { LeafType, TreePreset, Tree, TreeType } from '@dgreenheck/ez-tree';
+import { BarkType, applyTreeTextures, loadPresetWithTextures } from './textures';
 import { Environment } from './environment';
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { version } from '../../package.json';
+import { collectBarkTextures, exportUSD } from './usd';
 
 const exporter = new GLTFExporter();
+
+function defaultDetails() {
+  return Tree.defaultLODLevels.map(({ detail }) => ({
+    sectionStride: 1, segmentFactor: 1, leafStride: 1, leafScale: 1, leafDetail: 'full', ...detail,
+  }));
+}
+
+function download(blob, name) {
+  const link = document.getElementById('downloadLink');
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
 
 // ============================================================================
 // Heroicons (outline style)
@@ -150,6 +166,7 @@ function createSlider(label, value, min, max, step, onChange) {
     let val = parseFloat(e.target.value);
     if (isNaN(val)) val = min;
     slider.value = val;
+    val = Number(slider.value);
     valueInput.value = formatValue(val, step);
     setFill();
     onChange(val);
@@ -473,7 +490,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
       ${icons.chevronUp}
     </button>
     <h1 class="panel-title">EZ Tree</h1>
-    <p class="panel-subtitle">Procedural Tree Generator</p>
+    <p class="panel-subtitle">Mesh Leaf Generator</p>
   `;
   panel.appendChild(header);
 
@@ -523,10 +540,11 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   // Stats Overlay (viewport HUD) with LOD preview switching
   // ============================================================================
 
-  // The hero tree always generates at full detail; the LOD buttons re-mesh
-  // its geometry at a chosen level via createGeometry() so it can be
-  // inspected at any camera distance without THREE.LOD auto-switching.
+  // Inspect each editable LOD at any camera distance using the same skeleton.
   let previewLevel = 0;
+  let details = defaultDetails();
+  let budget = 25000;
+  let fitTarget = null;
   let lastBuildMs = null;
 
   const statsOverlay = document.createElement('div');
@@ -565,17 +583,15 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   const lodButtons = Tree.defaultLODLevels.map((level, i) => {
     const btn = document.createElement('button');
     btn.className = 'lod-button' + (i === 0 ? ' active' : '');
-    btn.textContent = i === 0 ? 'Full' : `LOD${i}`;
-    btn.title = i === 0
-      ? 'Full detail'
-      : `Preview detail level ${i} (switches at ${level.distance} units)`;
+    btn.textContent = `LOD${i}`;
+    btn.title = `Preview LOD${i} (starts at ${level.distance} units)`;
     btn.addEventListener('click', () => setPreviewLevel(i));
     lodSwitcher.appendChild(btn);
     return btn;
   });
 
   function applyLODPreview() {
-    const detail = Tree.defaultLODLevels[previewLevel]?.detail ?? {};
+    const detail = details[previewLevel];
     const t0 = performance.now();
     const { branches, leaves } = tree.createGeometry(detail);
     lastBuildMs = performance.now() - t0;
@@ -587,8 +603,10 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   function setPreviewLevel(level) {
     previewLevel = level;
+    fitTarget = null;
     lodButtons.forEach((b, i) => b.classList.toggle('active', i === level));
     applyLODPreview();
+    refreshOptimization();
     updateInfoDisplays();
   }
 
@@ -596,10 +614,16 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   function displayedCounts() {
     const gb = tree.branchesMesh.geometry;
     const gl = tree.leavesMesh.geometry;
-    return {
-      vertices: (gb.attributes.position?.count ?? 0) + (gl.attributes.position?.count ?? 0),
-      triangles: ((gb.index?.count ?? 0) + (gl.index?.count ?? 0)) / 3,
+    const counts = {
+      vertices: gb.attributes.position.count + gl.attributes.position.count,
+      triangles: (gb.index.count + gl.index.count) / 3,
     };
+    tree.trellisMesh?.traverseVisible(o => {
+      if (!o.isMesh) return;
+      counts.vertices += o.geometry.attributes.position.count;
+      counts.triangles += o.geometry.index.count / 3;
+    });
+    return counts;
   }
 
   // ============================================================================
@@ -609,11 +633,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   const onChange = () => {
     applyTreeTextures(tree);
     const t0 = performance.now();
-    tree.generate();
+    tree.generate(details[previewLevel]);
     lastBuildMs = performance.now() - t0;
-    if (previewLevel > 0) {
-      applyLODPreview();
-    }
+    fitTarget = null;
     tree.traverse((o) => {
       if (o.material) {
         o.material.needsUpdate = true;
@@ -630,10 +652,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     Object.fromEntries(Object.keys(TreePreset).map(p => [p, p])),
     initialPreset,
     (val) => {
-      loadPresetWithTextures(tree, val);
-      if (previewLevel > 0) {
-        applyLODPreview();
-      }
+      loadPresetWithTextures(tree, val, false);
+      tree.generate(details[previewLevel]);
+      fitTarget = null;
       refreshAllControls();
     }
   );
@@ -655,6 +676,53 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   presetsSection.add(randomSeedBtn);
 
   parametersTab.appendChild(presetsSection.element);
+
+  const optimization = createSection('Mesh Optimization', 'cube', false);
+  const lodSelect = createSelect('Edit Level', { LOD0: '0', LOD1: '1', LOD2: '2' }, '0',
+    value => setPreviewLevel(Number(value)));
+  optimization.add(lodSelect);
+  const tuning = [];
+  function editDetail(key, value) {
+    details[previewLevel][key] = value;
+    fitTarget = null;
+    applyLODPreview();
+    updateInfoDisplays();
+  }
+  const leafDetail = createSelect('Blade Detail', { Full: 'full', Reduced: 'reduced', Coarse: 'coarse' },
+    'full', value => editDetail('leafDetail', value));
+  optimization.add(leafDetail);
+  for (const [key, label, min, max, step] of [
+    ['leafStride', 'Keep Every Nth Leaf', 1, 128, 1],
+    ['leafScale', 'Leaf Scale', 0.5, 2, 0.01],
+    ['sectionStride', 'Branch Ring Step', 1, 16, 1],
+    ['segmentFactor', 'Branch Sides Factor', 0.25, 1, 0.05],
+  ]) {
+    const control = createSlider(label, details[0][key], min, max, step, value => editDetail(key, value));
+    optimization.add(control);
+    tuning.push({ key, control, min, max, step });
+  }
+  optimization.add(createSlider('Triangle Budget', budget, 100, 1000000, 100, value => { budget = value; }));
+  optimization.add(createButton('Fit to Budget', 'cube', () => {
+    details[previewLevel] = tree.fitTriangleBudget(budget);
+    fitTarget = budget;
+    applyLODPreview();
+    refreshOptimization();
+    updateInfoDisplays();
+  }));
+  const fitStatus = document.createElement('div');
+  fitStatus.className = 'control-label';
+  fitStatus.setAttribute('role', 'status');
+  optimization.add(fitStatus);
+  optimization.add(createButton('Reset This Level', 'cube', () => {
+    details[previewLevel] = defaultDetails()[previewLevel];
+    setPreviewLevel(previewLevel);
+  }));
+  function refreshOptimization() {
+    lodSelect.setValue(String(previewLevel));
+    leafDetail.setValue(details[previewLevel].leafDetail);
+    for (const { key, control } of tuning) control.setValue(details[previewLevel][key]);
+  }
+  parametersTab.appendChild(optimization.element);
 
   // ----- Bark Section -----
   const barkSection = createSection('Bark', 'cube', false);
@@ -864,7 +932,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   // ----- Leaves Section -----
   const leavesSection = createSection('Leaves', 'sparkles', false);
 
-  const leafTypeSelect = createSelect('Type', LeafType, tree.options.leaves.type, (val) => {
+  const leafTypeSelect = createSelect('Leaf Shape', LeafType, tree.options.leaves.type, (val) => {
     tree.options.leaves.type = val;
     onChange();
   });
@@ -877,13 +945,6 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   });
   leavesSection.add(leafTintPicker);
   controls.push({ control: leafTintPicker, update: () => leafTintPicker.setValue(tree.options.leaves.tint) });
-
-  const billboardSelect = createSelect('Billboard', Billboard, tree.options.leaves.billboard, (val) => {
-    tree.options.leaves.billboard = val;
-    onChange();
-  });
-  leavesSection.add(billboardSelect);
-  controls.push({ control: billboardSelect, update: () => billboardSelect.setValue(tree.options.leaves.billboard) });
 
   const leafAngleSlider = createSlider('Angle', tree.options.leaves.angle, 0, 100, 1, (val) => {
     tree.options.leaves.angle = val;
@@ -920,14 +981,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   leavesSection.add(leafVarianceSlider);
   controls.push({ control: leafVarianceSlider, update: () => leafVarianceSlider.setValue(tree.options.leaves.sizeVariance) });
 
-  const alphaTestSlider = createSlider('Alpha Test', tree.options.leaves.alphaTest, 0, 1, 0.01, (val) => {
-    tree.options.leaves.alphaTest = val;
-    onChange();
-  });
-  leavesSection.add(alphaTestSlider);
-  controls.push({ control: alphaTestSlider, update: () => alphaTestSlider.setValue(tree.options.leaves.alphaTest) });
-
-  const roundedNormalsToggle = createToggle('Rounded Normals', tree.options.leaves.roundedNormals, (val) => {
+  const roundedNormalsToggle = createToggle('Smooth Shading', tree.options.leaves.roundedNormals, (val) => {
     tree.options.leaves.roundedNormals = val;
     onChange();
   });
@@ -1070,12 +1124,6 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   environmentSection.add(sunAzimuthSlider);
   controls.push({ control: sunAzimuthSlider, update: () => sunAzimuthSlider.setValue(environment.skybox.sunAzimuth) });
 
-  const grassCountSlider = createSlider('Grass Count', environment.grass.instanceCount, 0, 25000, 100, (val) => {
-    environment.grass.instanceCount = val;
-  });
-  environmentSection.add(grassCountSlider);
-  controls.push({ control: grassCountSlider, update: () => grassCountSlider.setValue(environment.grass.instanceCount) });
-
   parametersTab.appendChild(environmentSection.element);
 
   // ----- Info Section -----
@@ -1099,6 +1147,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   function updateInfoDisplays() {
     const { vertices, triangles } = displayedCounts();
+    fitStatus.textContent = fitTarget === null ? '' : triangles <= fitTarget
+      ? `${triangles.toLocaleString()} of ${fitTarget.toLocaleString()} triangles`
+      : `Smallest available mesh: ${triangles.toLocaleString()} triangles`;
     vertexDisplay.setValue(vertices);
     triangleDisplay.setValue(triangles);
     statsVertices.textContent = Math.round(vertices).toLocaleString();
@@ -1117,7 +1168,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   const savePresetBtn = createButton('Save Preset', 'document', () => {
     const link = document.getElementById('downloadLink');
-    const json = JSON.stringify(tree.options, null, 2);
+    const json = JSON.stringify({ ...tree.options, lodDetails: details }, (key, value) => key === 'maps' ? undefined : value, 2);
     const blob = new Blob([json], { type: 'application/json' });
     link.href = URL.createObjectURL(blob);
     link.download = 'tree.json';
@@ -1134,104 +1185,87 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   const exportModelsSection = createSection('Export Models', 'cubeTransparent', true);
 
-  /**
-   * GLTFExporter aborts on textures whose image never loaded (e.g. the
-   * texture file is missing on disk). Rendering tolerates them, so strip
-   * them from the materials for the duration of an export and restore after.
-   * @param {THREE.Object3D} root
-   * @returns {() => void} restore function
-   */
-  function stripBrokenTextures(root) {
-    const restores = [];
-    root.traverse((o) => {
-      const materials = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
-      for (const material of materials) {
-        for (const key of ['map', 'aoMap', 'normalMap', 'roughnessMap', 'metalnessMap']) {
-          const texture = material[key];
-          if (texture?.isTexture && !texture.image) {
-            restores.push(() => { material[key] = texture; });
-            material[key] = null;
-          }
-        }
-      }
-    });
-    return () => restores.forEach((restore) => restore());
+  const exportStatus = document.createElement('div');
+  exportStatus.className = 'control-label';
+  exportStatus.setAttribute('role', 'status');
+
+  function exportMaterial(material) {
+    const copy = material.clone();
+    for (const key of ['map', 'aoMap', 'normalMap', 'roughnessMap', 'metalnessMap']) {
+      if (copy[key] && !copy[key].image) copy[key] = null;
+    }
+    return copy;
   }
 
-  const exportGlbBtn = createButton('Export GLB (Full Detail)', 'download', async ({ setStatus }) => {
-    setStatus('Exporting GLB…');
-    // Export at full detail regardless of the active LOD preview
-    const restoreLevel = previewLevel;
-    if (restoreLevel !== 0) {
-      setPreviewLevel(0);
+  function snapshotModel() {
+    const group = new THREE.Group();
+    group.name = 'Tree';
+    for (const mesh of [tree.branchesMesh, tree.leavesMesh]) {
+      const snapshot = new THREE.Mesh(mesh.geometry, exportMaterial(mesh.material));
+      snapshot.name = mesh.material.name === 'leaves' ? 'Leaves' : 'Branches';
+      group.add(snapshot);
     }
-    const restoreTextures = stripBrokenTextures(tree);
-    try {
+    if (tree.trellisMesh) group.add(tree.trellisMesh.clone(true));
+    return group;
+  }
+
+  function addExport(label, action) {
+    exportModelsSection.add(createButton(label, 'download', async ({ setStatus }) => {
+      exportStatus.textContent = '';
+      const level = previewLevel;
+      const model = snapshotModel();
+      try {
+        await action(model, level, setStatus);
+      } catch (error) {
+        exportStatus.textContent = 'Export failed. ' + error.message;
+        console.error(error);
+      } finally {
+        model.children[0].material.dispose();
+        model.children[1].material.dispose();
+      }
+    }));
+  }
+
+  addExport('Export GLB (Current Level)', async (model, level, setStatus) => {
+    setStatus('Exporting GLB...');
+    await paint();
+    const data = await exporter.parseAsync(model, { binary: true });
+    download(new Blob([data]), `tree_LOD${level}.glb`);
+  });
+  addExport('Export USD (Current Level)', async (model, level, setStatus) => {
+    setStatus('Exporting USD...');
+    await paint();
+    download(exportUSD(model), `tree_LOD${level}.usd`);
+  });
+
+  async function exportLevels(model, format, setStatus) {
+    const levels = structuredClone(details);
+    const source = new Tree();
+    source.options.copy(tree.options);
+    const files = {};
+    const textures = format === 'usd' ? await collectBarkTextures(model.children[0].material, files) : {};
+    for (const [i, detail] of levels.entries()) {
+      setStatus(`Exporting LOD ${i + 1}/${levels.length}...`);
       await paint();
-      const glb = await new Promise((resolve, reject) =>
-        exporter.parse(tree, resolve, reject, { binary: true }),
-      );
-      const blob = new Blob([glb], { type: 'application/octet-stream' });
-      const link = document.getElementById('downloadLink');
-      link.href = window.URL.createObjectURL(blob);
-      link.download = 'tree.glb';
-      link.click();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      restoreTextures();
-      if (restoreLevel !== 0) {
-        setPreviewLevel(restoreLevel);
+      const { branches, leaves } = source.createGeometry(detail);
+      model.children[0].geometry = branches;
+      model.children[1].geometry = leaves;
+      try {
+        const data = format === 'usd' ? await exportUSD(model, textures).arrayBuffer()
+          : await exporter.parseAsync(model, { binary: true });
+        files[`tree_LOD${i}.${format}`] = new Uint8Array(data);
+      } finally {
+        branches.dispose();
+        leaves.dispose();
       }
     }
-  });
-  exportModelsSection.add(exportGlbBtn);
-
-  const exportLodsBtn = createButton('Export LODs (ZIP)', 'archive', async ({ setStatus }) => {
-    const restoreTextures = stripBrokenTextures(tree);
-    try {
-      const files = {};
-      for (let i = 0; i < Tree.defaultLODLevels.length; i++) {
-        setStatus(`Exporting LOD ${i + 1}/${Tree.defaultLODLevels.length}…`);
-        await paint();
-
-        const { detail } = Tree.defaultLODLevels[i];
-        const { branches, leaves } = tree.createGeometry(detail ?? {});
-
-        try {
-          const branchesMesh = new THREE.Mesh(branches, tree.branchesMesh.material);
-          branchesMesh.name = `Branches_LOD${i}`;
-          const leavesMesh = new THREE.Mesh(leaves, tree.leavesMesh.material);
-          leavesMesh.name = `Leaves_LOD${i}`;
-          const group = new THREE.Group();
-          group.name = `Tree_LOD${i}`;
-          group.add(branchesMesh, leavesMesh);
-
-          const glb = await new Promise((resolve, reject) =>
-            exporter.parse(group, resolve, reject, { binary: true }),
-          );
-          files[`tree_LOD${i}.glb`] = new Uint8Array(glb);
-        } finally {
-          branches.dispose();
-          leaves.dispose();
-        }
-      }
-
-      setStatus('Zipping…');
-      await paint();
-
-      const blob = new Blob([zipSync(files)], { type: 'application/zip' });
-      const link = document.getElementById('downloadLink');
-      link.href = URL.createObjectURL(blob);
-      link.download = 'tree_lods.zip';
-      link.click();
-    } catch (err) {
-      console.error(err);
-    } finally {
-      restoreTextures();
-    }
-  });
-  exportModelsSection.add(exportLodsBtn);
+    setStatus('Zipping...');
+    await paint();
+    download(new Blob([zipSync(files, { level: 1 })], { type: 'application/zip' }), `tree_${format}_lods.zip`);
+  }
+  addExport('GLB LODs (ZIP)', (model, level, status) => exportLevels(model, 'glb', status));
+  addExport('USD LODs + Bark Textures (ZIP)', (model, level, status) => exportLevels(model, 'usd', status));
+  exportModelsSection.add(exportStatus);
 
   const exportPngBtn = createButton('Export PNG', 'photo', async ({ setStatus }) => {
     setStatus('Exporting PNG…');
@@ -1302,11 +1336,26 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
       const reader = new FileReader();
       reader.onload = function (e) {
         try {
-          tree.options = JSON.parse(e.target.result);
-          tree.generate();
-          if (previewLevel > 0) {
-            applyLODPreview();
+          const preset = JSON.parse(e.target.result);
+          // Resolve bark textures locally, including presets saved by older versions.
+          delete preset.bark?.maps;
+          // Older presets have no mesh settings and open at the original resolution.
+          details = defaultDetails();
+          for (const [i, detail] of details.entries()) {
+            const saved = preset.lodDetails?.[i];
+            if (!saved) continue;
+            for (const { key, min, max, step } of tuning) {
+              if (Number.isFinite(saved[key])) detail[key] = THREE.MathUtils.clamp(
+                step === 1 ? Math.round(saved[key]) : saved[key], min, max,
+              );
+            }
+            if (['full', 'reduced', 'coarse'].includes(saved.leafDetail)) detail.leafDetail = saved.leafDetail;
           }
+          tree.options.copy(preset);
+          applyTreeTextures(tree);
+          tree.generate(details[previewLevel]);
+          fitTarget = null;
+          refreshOptimization();
           refreshAllControls();
         } catch (error) {
           console.error('Error parsing JSON:', error);

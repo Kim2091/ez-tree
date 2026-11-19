@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import RNG from './rng';
 import { Branch } from './branch';
-import { Billboard, TreeType } from './enums';
+import { TreeType } from './enums';
+import { meshFoliage, trianglesPerLeaf } from './foliage';
 import TreeOptions from './options';
 import { loadPreset } from './presets/index';
 import { Trellis } from './trellis';
@@ -70,10 +71,9 @@ export class Tree extends THREE.Group {
    * @property {number} [segmentFactor=1] Radial segment multiplier;
    *   segments = max(3, round(segmentCount * segmentFactor))
    * @property {number} [leafStride=1] Keep every Nth leaf
+   * @property {string} [leafDetail='full'] Blade resolution: full, reduced or coarse
    * @property {number} [leafScale=1] Size multiplier for the kept leaves,
    *   typically 1/sqrt(kept fraction) to preserve canopy coverage
-   * @property {string} [billboard] Billboard mode override for this level
-   *   ('single' or 'double'); defaults to options.leaves.billboard
    */
 
   /**
@@ -84,8 +84,7 @@ export class Tree extends THREE.Group {
    */
 
   /**
-   * Default levels for generateLODs(). LOD1 is roughly 40% of the full
-   * triangle count, LOD2 roughly 20%.
+   * Default levels for generateLODs(). All levels use solid foliage.
    * @type {LODLevel[]}
    */
   static defaultLODLevels = [
@@ -97,6 +96,7 @@ export class Tree extends THREE.Group {
         sectionStride: 3,
         segmentFactor: 0.75,
         leafStride: 2,
+        leafDetail: 'reduced',
         // Slightly under the area-preserving sqrt(2): individual leaves are
         // still resolvable at this distance, so a full compensation reads as
         // "bigger leaves" rather than "same canopy".
@@ -109,25 +109,22 @@ export class Tree extends THREE.Group {
       detail: {
         sectionStride: 6,
         segmentFactor: 0.4,
-        leafStride: 2,
-        // Deliberately under-compensated: full coverage compensation for the
-        // thinning + single billboard would need 2x scale, which reads as
-        // balloon leaves. A slightly sparser canopy with natural-size leaves
-        // looks better at this distance (fogged, 250+ units in the demo).
+        leafStride: 4,
+        leafDetail: 'coarse',
         leafScale: 1.3,
-        billboard: Billboard.Single,
       },
     },
   ];
 
   /**
    * Generate a new tree
+   * @param {LODDetail} detail Mesh resolution to generate
    */
-  generate() {
+  generate(detail = {}) {
     this.#clearLOD();
     this.#generateSkeleton();
 
-    const buffers = this.#meshSkeleton();
+    const buffers = this.#meshSkeleton(detail);
     this.branches = buffers.branches;
     this.leaves = buffers.leaves;
 
@@ -281,7 +278,6 @@ export class Tree extends THREE.Group {
     const segmentFactor = detail.segmentFactor ?? 1;
     const leafStride = Math.max(1, Math.floor(detail.leafStride ?? 1));
     const leafScale = detail.leafScale ?? 1;
-    const billboard = detail.billboard ?? this.options.leaves.billboard;
 
     const branches = {
       verts: [],
@@ -291,22 +287,53 @@ export class Tree extends THREE.Group {
       windFactor: []
     };
 
-    const leaves = {
-      verts: [],
-      normals: [],
-      indices: [],
-      uvs: [],
-    };
-
     for (const skeletonBranch of this.skeleton.branches) {
       this.#meshBranch(branches, skeletonBranch, sectionStride, segmentFactor);
     }
 
-    for (let i = 0; i < this.skeleton.leaves.length; i += leafStride) {
-      this.#meshLeaf(leaves, this.skeleton.leaves[i], leafScale, billboard);
-    }
-
+    const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves.type, leafStride, leafScale, detail.leafDetail);
     return { branches, leaves };
+  }
+
+  /**
+   * Fit a triangle budget using the current skeleton. Estimate the exact cost
+   * of each candidate before allocating any vertex buffers. When the target
+   * is below the smallest supported mesh, return the lowest-cost result.
+   * @param {number} target Maximum triangles, including any visible trellis
+   * @returns {LODDetail}
+   */
+  fitTriangleBudget(target) {
+    if (!this.skeleton) this.#generateSkeleton();
+    let fixed = 0;
+    this.trellisMesh?.traverseVisible(o => { if (o.isMesh) fixed += o.geometry.index.count / 3; });
+    const count = this.skeleton.leaves.length;
+    let best, bestExcess = Infinity, bestPenalty = Infinity;
+    for (const sectionStride of [1, 2, 3, 4, 6, 8, 16]) {
+      for (const segmentFactor of [1, 0.75, 0.5, 0.25]) {
+        let branches = fixed;
+        for (const { sections, segmentCount } of this.skeleton.branches) {
+          const spans = Math.ceil((sections.length - 1) / sectionStride);
+          branches += 2 * spans * Math.max(3, Math.round(segmentCount * segmentFactor));
+        }
+        for (const [tier, leafDetail] of ['full', 'reduced', 'coarse'].entries()) {
+          const cost = trianglesPerLeaf(this.options.leaves.type, leafDetail);
+          const capacity = Math.max(1, Math.floor((target - branches) / cost));
+          const leafStride = Math.min(128, Math.max(1, Math.ceil(count / capacity)));
+          const total = branches + Math.ceil(count / leafStride) * cost;
+          const excess = Math.max(0, total - target);
+          // Prefer preserving occupied leaf sites before spending on blade detail.
+          const penalty = 1.8 * Math.log2(leafStride) + tier
+            + 0.55 * Math.log2(sectionStride) + 0.4 * Math.log2(1 / segmentFactor);
+          if (excess < bestExcess || (excess === bestExcess && penalty < bestPenalty)) {
+            bestExcess = excess;
+            bestPenalty = penalty;
+            best = { sectionStride, segmentFactor, leafStride, leafDetail,
+              leafScale: Math.min(1.5, Math.pow(leafStride, 0.25)) };
+          }
+        }
+      }
+    }
+    return best;
   }
 
   /**
@@ -638,93 +665,12 @@ export class Tree extends THREE.Group {
           -this.options.leaves.sizeVariance,
         ));
 
+    if (size <= 0 || this.options.leaves.count <= 0) return;
     this.skeleton.leaves.push({
       origin: origin.clone(),
       orientation: orientation.clone(),
       size,
     });
-  }
-
-  /**
-  * Emits the quad geometry for one skeleton leaf into the buffers
-  * @param {{verts: number[], normals: number[], indices: number[], uvs: number[]}} buffers
-  * @param {{origin: THREE.Vector3, orientation: THREE.Euler, size: number}} leaf
-  * @param {number} scale Size multiplier for this detail level
-  * @param {string} billboard Billboard mode for this detail level
-  */
-  #meshLeaf(buffers, leaf, scale, billboard) {
-    let i = buffers.verts.length / 3;
-
-    const { origin, orientation } = leaf;
-
-    // Width and length of the leaf quad
-    const leafSize = leaf.size * scale;
-
-    const W = leafSize;
-    const L = leafSize;
-
-    const createLeaf = (rotation) => {
-      // Create quad vertices
-      const v = [
-        new THREE.Vector3(-W / 2, L, 0),
-        new THREE.Vector3(-W / 2, 0, 0),
-        new THREE.Vector3(W / 2, 0, 0),
-        new THREE.Vector3(W / 2, L, 0),
-      ].map((v) =>
-        v
-          .applyEuler(new THREE.Euler(0, rotation, 0))
-          .applyEuler(orientation)
-          .add(origin),
-      );
-
-      buffers.verts.push(
-        v[0].x,
-        v[0].y,
-        v[0].z,
-        v[1].x,
-        v[1].y,
-        v[1].z,
-        v[2].x,
-        v[2].y,
-        v[2].z,
-        v[3].x,
-        v[3].y,
-        v[3].z,
-      );
-
-      const n = new THREE.Vector3(0, 0, 1).applyEuler(orientation);
-
-      // The normal vectors are an average of the direction of the leaf and the directions to the individual vertices.
-      // This creates a nice rounded shape while maintaining the canopy shape as a whole.
-      const roundedNormals = this.options.leaves.roundedNormals;
-      let n1 = roundedNormals ? new THREE.Vector3().copy(n).add(v[0]).sub(origin).normalize() : n;
-      let n2 = roundedNormals ? new THREE.Vector3().copy(n).add(v[1]).sub(origin).normalize() : n;
-      let n3 = roundedNormals ? new THREE.Vector3().copy(n).add(v[2]).sub(origin).normalize() : n;
-      let n4 = roundedNormals ? new THREE.Vector3().copy(n).add(v[3]).sub(origin).normalize() : n;
-
-      buffers.normals.push(
-        n1.x,
-        n1.y,
-        n1.z,
-        n2.x,
-        n2.y,
-        n2.z,
-        n3.x,
-        n3.y,
-        n3.z,
-        n4.x,
-        n4.y,
-        n4.z,
-      );
-      buffers.uvs.push(0, 1, 0, 0, 1, 0, 1, 1);
-      buffers.indices.push(i, i + 1, i + 2, i, i + 2, i + 3);
-      i += 4;
-    };
-
-    createLeaf(0);
-    if (billboard === Billboard.Double) {
-      createLeaf(Math.PI / 2);
-    }
   }
 
   /**
@@ -838,26 +784,20 @@ export class Tree extends THREE.Group {
 
   /**
    * Builds a BufferGeometry from raw attribute buffers
-   * @param {{verts: number[], normals: number[], indices: number[], uvs: number[]}} buffers
    * @returns {THREE.BufferGeometry}
    */
   #buildBufferGeometry(buffers) {
     const g = new THREE.BufferGeometry();
-    g.setAttribute(
-      'position',
-      new THREE.BufferAttribute(new Float32Array(buffers.verts), 3),
+    const attribute = (data, size) => new THREE.BufferAttribute(
+      data instanceof Float32Array ? data : new Float32Array(data), size,
     );
-    g.setAttribute(
-      'normal',
-      new THREE.BufferAttribute(new Float32Array(buffers.normals), 3),
-    );
-    g.setAttribute(
-      'uv',
-      new THREE.BufferAttribute(new Float32Array(buffers.uvs), 2),
-    );
-    g.setIndex(
-      new THREE.BufferAttribute(new Uint16Array(buffers.indices), 1),
-    );
+    g.setAttribute('position', attribute(buffers.verts, 3));
+    g.setAttribute('normal', attribute(buffers.normals, 3));
+    g.setAttribute('uv', attribute(buffers.uvs, 2));
+    if (buffers.colors) g.setAttribute('color', attribute(buffers.colors, 3));
+    // Three chooses 16- or 32-bit indices for ordinary branch index arrays.
+    g.setIndex(Array.isArray(buffers.indices)
+      ? buffers.indices : new THREE.BufferAttribute(buffers.indices, 1));
     g.computeBoundingSphere();
     return g;
   }
@@ -924,10 +864,9 @@ export class Tree extends THREE.Group {
   #createLeafMaterial() {
     const mat = new THREE.MeshStandardMaterial({
       name: 'leaves',
-      map: this.options.leaves.map ?? null,
+      vertexColors: true,
       color: new THREE.Color(this.options.leaves.tint),
-      side: THREE.DoubleSide,
-      alphaTest: this.options.leaves.alphaTest,
+      flatShading: !this.options.leaves.roundedNormals,
       metalness: 0.0,
       roughness: 1.0,
       dithering: true
@@ -939,7 +878,6 @@ export class Tree extends THREE.Group {
       shader.uniforms.uWindStrength = { value: new THREE.Vector3(0.5, 0, 0.5) };
       shader.uniforms.uWindFrequency = { value: 0.5 };
       shader.uniforms.uWindScale = { value: 70 };
-      shader.uniforms.uCustomNormals = { value: this.options.leaves.roundedNormals };
 
       shader.vertexShader = `
         uniform float uTime;
@@ -1064,15 +1002,6 @@ export class Tree extends THREE.Group {
         mvPosition = modelViewMatrix * mvPosition;
         gl_Position = projectionMatrix * mvPosition;
         `
-      );
-
-      // Skip the backface normal flip in normal_fragment_begin when using custom normals
-      shader.fragmentShader = `uniform bool uCustomNormals;\n` + shader.fragmentShader.replace(
-        '#include <normal_fragment_begin>',
-        THREE.ShaderChunk.normal_fragment_begin.replace(
-          'normal *= faceDirection;',
-          'if (!uCustomNormals) { normal *= faceDirection; }'
-        )
       );
 
       // Non-enumerable so JSON serialization (e.g. GLTFExporter's userData

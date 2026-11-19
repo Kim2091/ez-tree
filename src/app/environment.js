@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { Skybox } from './skybox';
 import { Ground } from './ground';
-import { Grass } from './grass';
 import { Rocks } from './rocks';
 import { Clouds } from './clouds';
 
@@ -11,9 +10,6 @@ export class Environment extends THREE.Object3D {
 
     this.ground = new Ground();
     this.add(this.ground);
-
-    this.grass = new Grass();
-    this.add(this.grass);
 
     this.skybox = new Skybox();
     this.add(this.skybox);
@@ -28,7 +24,6 @@ export class Environment extends THREE.Object3D {
   }
 
   update(elapsedTime) {
-    this.grass.update(elapsedTime);
     this.clouds.update(elapsedTime);
   }
 }

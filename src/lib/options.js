@@ -1,4 +1,4 @@
-import { Billboard, TreeType } from './enums';
+import { LeafType, TreeType } from './enums';
 
 export default class TreeOptions {
   constructor() {
@@ -126,16 +126,8 @@ export default class TreeOptions {
 
     // Leaf parameters
     this.leaves = {
-      // Informational identifier (e.g. 'oak', 'ash'). Library does not consume
-      // it; the host app uses it to resolve which texture to assign to `map`.
-      type: 'oak',
-
-      // Color map supplied by the caller. THREE.Texture or null.
-      // When null, leaves render as a flat tinted quad.
-      map: null,
-
-      // Whether to use single or double/perpendicular billboards
-      billboard: Billboard.Double,
+      // Species determines the outline and cross-section of the foliage mesh.
+      type: LeafType.Oak,
 
       // Angle of leaves relative to parent branch (degrees)
       angle: 10,
@@ -155,10 +147,7 @@ export default class TreeOptions {
       // Tint color for the leaves
       tint: 0xffffff,
 
-      // Controls transparency of leaf texture
-      alphaTest: 0.5,
-
-      // Calculates custom normals to imply a rounded canopy shape
+      // Smooth the normals across the modeled leaf surfaces.
       roundedNormals: true,
     };
 

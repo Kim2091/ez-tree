@@ -81,14 +81,12 @@
   },
   "leaves": {
     "type": "pine",
-    "billboard": "double",
     "angle": 39,
     "count": 30,
     "start": 0.09,
     "size": 1.435,
     "sizeVariance": 0.201,
-    "tint": 16777215,
-    "alphaTest": 0.3
+    "tint": 16777215
   },
   "trellis": {
     "enabled": false

@@ -30,20 +30,21 @@ export async function createScene(renderer) {
     0.1,
     2000,
   );
-  camera.position.set(100, 20, 0);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.enablePan = true;
-  controls.minPolarAngle = Math.PI / 2 - 0.2;
-  controls.maxPolarAngle = Math.PI / 2 + 0.13;
-  controls.minDistance = 10;
+  controls.maxPolarAngle = Math.PI / 2 + 0.35;
+  controls.minDistance = 0.5;
   controls.maxDistance = 150;
-  controls.target.set(0, 25, 0);
-  controls.update();
-
   const tree = new Tree();
   loadPresetWithTextures(tree, 'Ash Medium');
+  const bounds = new THREE.Box3().setFromObject(tree);
+  bounds.getCenter(controls.target);
+  const height = bounds.max.y - bounds.min.y;
+  const distance = 0.65 * height / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  camera.position.copy(controls.target).add(new THREE.Vector3(distance, -0.06 * height, 0));
+  controls.update();
   tree.castShadow = true;
   tree.receiveShadow = true;
   scene.add(tree);
@@ -58,7 +59,7 @@ export async function createScene(renderer) {
   logoElement.style.clipPath = `inset(100% 0% 0% 0%)`;
   progressElement.innerHTML = 'LOADING... 0%';
 
-  const treeCount = 100;
+  const treeCount = 16;
   const minDistance = 175;
   const maxDistance = 500;
 
@@ -72,7 +73,10 @@ export async function createScene(renderer) {
     t.position.set(r * Math.cos(theta), 0, r * Math.sin(theta));
     loadPresetWithTextures(t, presets[index], false);
     t.options.seed = 10000 * Math.random();
-    t.generateLODs();
+    // The scenery stays outside the editing area. Only allocate its distant mesh.
+    t.generateLODs([{ distance: 0, detail: {
+      sectionStride: 6, segmentFactor: 0.4, leafStride: 10, leafScale: 1.4, leafDetail: 'coarse',
+    } }]);
     t.castShadow = true;
     t.receiveShadow = true;
 

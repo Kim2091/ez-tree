@@ -51,7 +51,7 @@ export class Skybox extends THREE.Mesh {
     this.name = 'Skybox';
 
     // Create a box geometry and apply the skybox material
-    this.geometry = new THREE.SphereGeometry(900, 900, 900);
+    this.geometry = new THREE.SphereGeometry(900, 48, 24);
 
     // Create the skybox material with the shaders
     this.material = new THREE.ShaderMaterial({

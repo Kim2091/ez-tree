@@ -81,14 +81,12 @@
   },
   "leaves": {
     "type": "aspen",
-    "billboard": "double",
     "angle": 36,
     "count": 20,
     "start": 0.15217391304347827,
     "size": 3.4782608695652173,
     "sizeVariance": 0.7,
-    "tint": 16580390,
-    "alphaTest": 0.5
+    "tint": 16580390
   },
   "trellis": {
     "enabled": false

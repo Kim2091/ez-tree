@@ -81,14 +81,12 @@
   },
   "leaves": {
     "type": "oak",
-    "billboard": "double",
     "angle": 42,
     "count": 18,
     "start": 0.16,
     "size": 2.5,
     "sizeVariance": 0.7,
-    "tint": 14013901,
-    "alphaTest": 0.5
+    "tint": 14013901
   },
   "trellis": {
     "enabled": false

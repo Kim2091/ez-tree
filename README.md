@@ -1,26 +1,38 @@
-# EZ-Tree
+# EZ-Tree mesh leaf generator
 
-![NPM Version](https://img.shields.io/npm/v/%40dgreenheck%2Fez-tree)
-![NPM Downloads](https://img.shields.io/npm/dw/%40dgreenheck%2Fez-tree)
-![GitHub Repo stars](https://img.shields.io/github/stars/dgreenheck/ez-tree)
-![X (formerly Twitter) Follow](https://img.shields.io/twitter/follow/dangreenheck)
-![YouTube Channel Subscribers](https://img.shields.io/youtube/channel/subscribers/UCrdx_EU_Wx8_uBfqO0cI-9Q)
+A local edition of Daniel Greenheck's EZ-Tree. Oak has lobed blades, aspen has rounded blades, ash has paired leaflets on a stem, and pine has clusters of individual needles. Each blade has a closed cross-section, a modeled tip, and opaque vertex colors. Every LOD uses this geometry.
 
-<p align="center">
-<img src="https://github.com/user-attachments/assets/cb5f5edd-3e1b-453d-925f-734965126b17">
-</p>
+## Run the editor
 
-# About
-EZ-Tree is a procedural tree generator with dozens of tunable parameters. The standalone tree generation code is published as a library and can be imported into your own application for dynamically generating trees on demand. Additionally, there is a standalone web app which allows you to create trees within the browser and export as .PNG or .GLB files.
+From this directory, run the following commands and open the local address printed by Vite.
 
-# App
-https://eztree.dev
-
-# Installation
-
-```js
-npm i @dgreenheck/ez-tree
+```sh
+npm ci
+npm run dev
 ```
+
+Choose a tree preset, then open **Leaves** to adjust leaf shape, density, size, angle, and tint. Drag to orbit, scroll to zoom, and right-drag to pan.
+
+## Optimize a tree
+
+Open **Mesh Optimization** and select the LOD you want to edit. **Fit to Budget** chooses blade resolution, leaf spacing, branch ring spacing, and branch sides for the triangle target. The status reports the actual count, including the trellis when visible. If the target falls below the supported minimum, the tool shows the smallest available result. Use the individual controls to tune the silhouette and inspect each level with the viewport's LOD buttons. **Reset This Level** restores its initial settings. **Save Preset** includes the three sets of mesh settings.
+
+For example, the shipped Ash Medium seed has 509,600 triangles at full detail. A 25,000-triangle target produces 24,048 triangles. The tree batches the bark and foliage into one indexed mesh each.
+
+## Export
+
+| Export | Contents |
+| --- | --- |
+| GLB (Current Level) | Visible tree geometry, vertex colors, and available bark textures in one binary glTF file |
+| USD (Current Level) | Standalone ASCII OpenUSD stage with indexed meshes, normals, UVs, vertex colors, and opaque preview materials. Bark uses its tint. |
+| GLB LODs (ZIP) | One GLB for each of the three configured levels |
+| USD LODs + Bark Textures (ZIP) | Three USD stages with relative paths to the shared bark color, normal, and roughness images. Extract the ZIP with its directory structure intact. |
+
+The models use the tree's rest pose. Wind is animated in the browser preview.
+
+## Library
+
+Build this checkout with `npm run build:lib`. The original project and attribution are available at the end of this README.
 
 # Usage
 
@@ -30,7 +42,7 @@ const tree = new Tree();
 
 // Set parameters
 tree.options.seed = 12345;
-tree.options.trunk.length = 20;
+tree.options.branch.length[0] = 20;
 tree.options.branch.levels = 3;
 
 // Generate tree and add to your Three.js scene
@@ -51,7 +63,7 @@ tree.generateLODs(); // instead of generate()
 scene.add(tree);
 ```
 
-The default levels (`Tree.defaultLODLevels`) switch at 100 and 250 units, reducing to roughly 40% and 20% of the full triangle count. You can pass custom levels:
+The default levels switch at 100 and 250 units. You can set custom levels with `generateLODs()`.
 
 ```js
 tree.generateLODs([
@@ -64,7 +76,7 @@ tree.generateLODs([
       segmentFactor: 0.75, // reduce radial segments to 75% (min 3)
       leafStride: 2,       // keep every 2nd leaf...
       leafScale: 1.4,      // ...enlarged to preserve canopy coverage
-      billboard: 'single', // drop the second crossed leaf quad
+      leafDetail: 'coarse', // simplify each solid blade
     },
   },
 ]);
@@ -74,14 +86,7 @@ All LOD levels share one bark material and one leaf material, so `tree.update(ti
 
 If you have your own LOD or instancing system, `tree.createGeometry(detail)` returns raw `{ branches, leaves }` `BufferGeometry` pairs at any detail level without touching the tree's own meshes.
 
-# Running Standalone App Locally
-
-To run the standalone app locally, you first need to build the EZ-Tree library before running the app.
-
-```bash
-npm install
-npm run app
-```
+To fit a specific budget from code, call `tree.fitTriangleBudget(25000)` and pass the returned detail settings to `tree.createGeometry(detail)` or `tree.generate(detail)`. Run the regression checks with `npm test`.
 
 # Running App with Docker
 
@@ -130,13 +135,13 @@ The `branch` object defines parameters for the trunk and branch levels of the tr
 
 The `leaves` object defines properties that control the appearance and placement of leaves.
 
-- **`type`**: Specifies the type of leaf texture, selected from the `LeafType` enumeration (e.g., `LeafType.Oak`).
-- **`billboard`**: Defines how leaves are rendered. The `Billboard` enumeration can be set to `Single` or `Double` to indicate single or perpendicular double-sided leaves.
+- `type` chooses the oak, aspen, ash, or pine mesh.
 - **`angle`**: Defines the angle of the leaves relative to the parent branch, in degrees.
 - **`count`**: Number of leaves to generate.
 - **`start`**: Specifies where along the length of the branch (as a value between `0` and `1`) leaves should start growing.
 - **`size`**: Size of the leaves, represented as a numeric value.
 - **`sizeVariance`**: Specifies how much variance in size each leaf instance should have, making the leaves look more natural.
 - **`tint`**: Tint color applied to the leaves, defined as a hexadecimal color value (e.g., `0xffffff` for white).
-- **`alphaTest`**: Sets the alpha threshold for leaf transparency, controlling the transparency of the leaf textures.
+- `roundedNormals` controls smooth shading of the leaf surface in the preview.
 
+Based on [EZ-Tree by Daniel Greenheck](https://github.com/dgreenheck/ez-tree), distributed under the [MIT license](LICENSE).

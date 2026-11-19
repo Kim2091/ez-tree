@@ -17,16 +17,8 @@ export const BarkType = {
   Bark015: 'Bark015',
 };
 
-export const LeafType = {
-  Ash: 'ash',
-  Aspen: 'aspen',
-  Oak: 'oak',
-  Pine: 'pine',
-};
-
 const textureLoader = new THREE.TextureLoader();
 const barkCache = new Map();
-const leafCache = new Map();
 
 // The onError callbacks below matter: a texture whose file is missing keeps
 // an undefined image forever (the dev server masks the 404 by serving
@@ -67,25 +59,7 @@ export function getBarkMaps(type) {
 }
 
 /**
- * Returns a cached leaf color texture for the given leaf type.
- * @param {string} type - one of LeafType values
- * @returns {THREE.Texture | null}
- */
-export function getLeafMap(type) {
-  if (leafCache.has(type)) return leafCache.get(type);
-  const texture = loadColor(`/textures/leaves/${type}.png`, () => {
-    console.warn(`Missing leaf texture: /textures/leaves/${type}.png; skipping.`);
-    leafCache.set(type, null);
-  });
-  texture.premultiplyAlpha = true;
-  leafCache.set(type, texture);
-  return texture;
-}
-
-/**
- * Assigns bark + leaf textures onto the tree's options based on its current
- * `bark.type` and `leaves.type` identifiers. Call this before `tree.generate()`
- * whenever the type strings change.
+ * Assigns the bark textures for the current preset.
  * @param {import('@dgreenheck/ez-tree').Tree} tree
  */
 export function applyTreeTextures(tree) {
@@ -95,7 +69,6 @@ export function applyTreeTextures(tree) {
     tree.options.bark.maps.normal = barkMaps.normal;
     tree.options.bark.maps.roughness = barkMaps.roughness;
   }
-  tree.options.leaves.map = getLeafMap(tree.options.leaves.type);
 }
 
 /**
