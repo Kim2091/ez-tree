@@ -2,6 +2,8 @@
 
 A local edition of Daniel Greenheck's EZ-Tree. Oak has lobed blades, aspen has rounded blades, ash has paired leaflets on a stem, and pine has clusters of individual needles. Each blade has a closed cross-section, a modeled tip, and opaque vertex colors. Every LOD uses this geometry.
 
+![Rendered ash, oak, aspen, and pine presets with close-ups of oak foliage and aspen bark](docs/tree-surfaces.jpg)
+
 ## Run the editor
 
 From this directory, run the following commands and open the local address printed by Vite.
@@ -11,22 +13,27 @@ npm ci
 npm run dev
 ```
 
-Choose a tree preset, then open **Leaves** to adjust leaf shape, density, size, angle, and tint. Drag to orbit, scroll to zoom, and right-drag to pan.
+Choose a tree preset, then open **Leaves** to adjust leaf shape, density, size, angle, tint, and surface textures. Drag to orbit, scroll to zoom, and right-drag to pan. Double-click a leaf or trunk to inspect its surface. Double-click the background or use **Camera → Frame Entire Tree** to return to the canopy.
+
+The tree, shrub, and trellis presets use metre-scale dimensions. Ash carries pairs of compound leaves, oak grows larger spreading limbs, aspen has a slender pale trunk, and pine branches grow in whorls with lateral sprays of needles. The updated growth model changes the shape produced by earlier seeds. The same seed and settings reproduce a tree within this version.
+
+Each blade has its own root-to-tip UVs for 1024 × 1024 RGB color, normal, and roughness maps. Bark UVs follow branch length through every LOD. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
 
 ## Optimize a tree
 
 Open **Mesh Optimization** and select the LOD you want to edit. **Fit to Budget** chooses blade resolution, leaf spacing, branch ring spacing, and branch sides for the triangle target. The status reports the actual count, including the trellis when visible. If the target falls below the supported minimum, the tool shows the smallest available result. Use the individual controls to tune the silhouette and inspect each level with the viewport's LOD buttons. **Reset This Level** restores its initial settings. **Save Preset** includes the three sets of mesh settings.
 
-For example, the shipped Ash Medium seed has 509,600 triangles at full detail. A 25,000-triangle target produces 24,048 triangles. The tree batches the bark and foliage into one indexed mesh each.
+The shipped Ash Medium seed has 2,589,828 triangles at full detail. A 25,000-triangle target produces 24,192 triangles. The tree batches the bark and foliage into one indexed mesh each.
 
 ## Export
 
 | Export | Contents |
 | --- | --- |
-| GLB (Current Level) | Visible tree geometry, vertex colors, and available bark textures in one binary glTF file |
+| GLB (Current Level) | Visible tree geometry, vertex colors, and embedded bark and foliage textures in one binary glTF file |
 | USD (Current Level) | Standalone ASCII OpenUSD stage with indexed meshes, normals, UVs, vertex colors, and opaque preview materials. Bark uses its tint. |
 | GLB LODs (ZIP) | One GLB for each of the three configured levels |
-| USD LODs + Bark Textures (ZIP) | Three USD stages with relative paths to the shared bark color, normal, and roughness images. Extract the ZIP with its directory structure intact. |
+| USD + Textures (Current Level ZIP) | The selected USD mesh with its bark and foliage color, normal, and roughness images |
+| USD LODs + Textures (ZIP) | Three USD stages referencing one shared set of bark and foliage images. Extract either textured ZIP with its directory structure intact. |
 
 The models use the tree's rest pose. Wind is animated in the browser preview.
 

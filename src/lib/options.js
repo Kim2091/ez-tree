@@ -1,153 +1,19 @@
-import { LeafType, TreeType } from './enums';
+import oak from './presets/oak_medium.json';
 
 export default class TreeOptions {
   constructor() {
     this.seed = 0;
-    this.type = TreeType.Deciduous;
-
-    // Bark parameters
+    this.type = oak.type;
+    // A new library tree uses the same crown and surfaces as the editor's oak.
+    // Clone the nested controls so edits to one seed never mutate the preset.
     this.bark = {
-      // Informational identifier carried through presets. The library does not
-      // consume this field; the host app uses it to resolve which texture set
-      // to assign to `maps` below.
-      type: 'Bark001',
-
-      // Texture maps supplied by the caller. Each entry is a THREE.Texture or
-      // null. When `textured` is true, non-null maps are applied to the
-      // material; null maps fall back to the tint color for that channel.
-      maps: {
-        color: null,
-        ao: null,
-        normal: null,
-        roughness: null,
-      },
-
-      // Tint of the tree trunk
-      tint: 0xffffff,
-
-      // Use face normals for shading instead of vertex normals
-      flatShading: false,
-
-      // Apply texture to bark
-      textured: true,
-
-      // Scale for the texture
-      textureScale: { x: 1, y: 1 },
+      ...structuredClone(oak.bark),
+      maps: { color: null, ao: null, normal: null, roughness: null },
     };
-
-    // Branch parameters
-    this.branch = {
-      // Number of branch recursion levels. 0 = trunk only
-      levels: 3,
-
-      // Angle of the child branches relative to the parent branch (degrees)
-      angle: {
-        1: 70,
-        2: 60,
-        3: 60,
-      },
-
-      // Number of children per branch level
-      children: {
-        0: 7,
-        1: 7,
-        2: 5,
-      },
-
-      // External force encouraging tree growth in a particular direction
-      force: {
-        direction: { x: 0, y: 1, z: 0 },
-        strength: 0.01,
-      },
-
-      // Amount of curling/twisting at each branch level
-      gnarliness: {
-        0: 0.15,
-        1: 0.2,
-        2: 0.3,
-        3: 0.02,
-      },
-
-      // Length of each branch level
-      length: {
-        0: 20,
-        1: 20,
-        2: 10,
-        3: 1,
-      },
-
-      // Radius of each branch level
-      radius: {
-        0: 1.5,
-        1: 0.7,
-        2: 0.7,
-        3: 0.7,
-      },
-
-      // Number of sections per branch level
-      sections: {
-        0: 12,
-        1: 10,
-        2: 8,
-        3: 6,
-      },
-
-      // Number of radial segments per branch level
-      segments: {
-        0: 8,
-        1: 6,
-        2: 4,
-        3: 3,
-      },
-
-      // Defines where child branches start forming on the parent branch
-      start: {
-        1: 0.4,
-        2: 0.3,
-        3: 0.3,
-      },
-
-      // Taper at each branch level
-      taper: {
-        0: 0.7,
-        1: 0.7,
-        2: 0.7,
-        3: 0.7,
-      },
-
-      // Amount of twist at each branch level
-      twist: {
-        0: 0,
-        1: 0,
-        2: 0,
-        3: 0,
-      },
-    };
-
-    // Leaf parameters
+    this.branch = structuredClone(oak.branch);
     this.leaves = {
-      // Species determines the outline and cross-section of the foliage mesh.
-      type: LeafType.Oak,
-
-      // Angle of leaves relative to parent branch (degrees)
-      angle: 10,
-
-      // Number of leaves
-      count: 1,
-
-      // Where leaves start to grow on the length of the branch (0 to 1)
-      start: 0,
-
-      // Size of the leaves
-      size: 2.5,
-
-      // Variance in leaf size between each instance
-      sizeVariance: 0.7,
-
-      // Tint color for the leaves
-      tint: 0xffffff,
-
-      // Smooth the normals across the modeled leaf surfaces.
+      ...oak.leaves,
+      maps: { color: null, normal: null, roughness: null },
       roundedNormals: true,
     };
 

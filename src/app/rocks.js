@@ -39,12 +39,12 @@ export class RockOptions {
   /**
    * Scale factor 
    */
-  size = { x: 2, y: 2, z: 2 };
+  size = { x: 0.32, y: 0.25, z: 0.32 };
 
   /**
    * Maximum variation in the rock size
    */
-  sizeVariation = { x: 3, y: 3, z: 3 };
+  sizeVariation = { x: 0.65, y: 0.42, z: 0.65 };
 }
 
 export class Rocks extends THREE.Group {
@@ -73,10 +73,11 @@ export class Rocks extends THREE.Group {
       // Set position randomly
       const p = new THREE.Vector3(
         2 * (Math.random() - 0.5) * 250,
-        0.3,
+        0.02,
         2 * (Math.random() - 0.5) * 250
       );
 
+      if (Math.hypot(p.x, p.z) < 16) continue;
       dummy.position.copy(p);
 
       // Set rotation randomly

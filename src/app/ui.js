@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { zipSync } from 'three/addons/libs/fflate.module.js';
 import { LeafType, TreePreset, Tree, TreeType } from '@dgreenheck/ez-tree';
-import { BarkType, applyTreeTextures, loadPresetWithTextures } from './textures';
+import { BarkType, prepareExportMaterial, applyTreeTextures, loadPresetWithTextures } from './textures';
 import { Environment } from './environment';
 import { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { version } from '../../package.json';
-import { collectBarkTextures, exportUSD } from './usd';
+import { collectTextures, exportUSD } from './usd';
+import { frameTree } from './scene';
 
 const exporter = new GLTFExporter();
 
@@ -654,6 +655,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     (val) => {
       loadPresetWithTextures(tree, val, false);
       tree.generate(details[previewLevel]);
+      frameTree(tree, camera, orbitControls, environment.skybox.sun);
       fitTarget = null;
       refreshAllControls();
     }
@@ -845,8 +847,14 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // Length subsection
   const lengthSubsection = createSubSection('Length');
+  const leaderScale = createSlider('Trunk Continuation', tree.options.branch.leaderScale, 0.1, 1.5, 0.01, value => {
+    tree.options.branch.leaderScale = value;
+    onChange();
+  });
+  lengthSubsection.add(leaderScale);
+  controls.push({ control: leaderScale, update: () => leaderScale.setValue(tree.options.branch.leaderScale) });
   for (let i = 0; i <= 3; i++) {
-    const slider = createSlider(`Level ${i}`, tree.options.branch.length[i], 0.1, 100, 0.1, (val) => {
+    const slider = createSlider(`Level ${i}`, tree.options.branch.length[i], 0.005, 100, 0.005, (val) => {
       tree.options.branch.length[i] = val;
       onChange();
     });
@@ -858,7 +866,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   // Radius subsection
   const radiusSubsection = createSubSection('Radius');
   for (let i = 0; i <= 3; i++) {
-    const slider = createSlider(`Level ${i}`, tree.options.branch.radius[i], 0.1, 5, 0.01, (val) => {
+    const slider = createSlider(`Level ${i}`, tree.options.branch.radius[i], 0.005, 5, 0.005, (val) => {
       tree.options.branch.radius[i] = val;
       onChange();
     });
@@ -870,7 +878,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   // Sections subsection
   const sectionsSubsection = createSubSection('Sections');
   for (let i = 0; i <= 3; i++) {
-    const slider = createSlider(`Level ${i}`, tree.options.branch.sections[i], 1, 20, 1, (val) => {
+    const slider = createSlider(`Level ${i}`, tree.options.branch.sections[i], 1, 32, 1, (val) => {
       tree.options.branch.sections[i] = val;
       onChange();
     });
@@ -882,7 +890,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   // Segments subsection
   const segmentsSubsection = createSubSection('Segments');
   for (let i = 0; i <= 3; i++) {
-    const slider = createSlider(`Level ${i}`, tree.options.branch.segments[i], 3, 16, 1, (val) => {
+    const slider = createSlider(`Level ${i}`, tree.options.branch.segments[i], 3, 32, 1, (val) => {
       tree.options.branch.segments[i] = val;
       onChange();
     });
@@ -939,6 +947,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   leavesSection.add(leafTypeSelect);
   controls.push({ control: leafTypeSelect, update: () => leafTypeSelect.setValue(tree.options.leaves.type) });
 
+  const leafTextures = createToggle('Surface Textures', tree.options.leaves.textured, value => {
+    tree.options.leaves.textured = value;
+    onChange();
+  });
+  leavesSection.add(leafTextures);
+  controls.push({ control: leafTextures, update: () => leafTextures.setValue(tree.options.leaves.textured) });
+
   const leafTintPicker = createColorPicker('Tint', tree.options.leaves.tint, (val) => {
     tree.options.leaves.tint = val;
     onChange();
@@ -967,7 +982,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   leavesSection.add(leafStartSlider);
   controls.push({ control: leafStartSlider, update: () => leafStartSlider.setValue(tree.options.leaves.start) });
 
-  const leafSizeSlider = createSlider('Size', tree.options.leaves.size, 0, 10, 0.1, (val) => {
+  const leafSizeSlider = createSlider('Size', tree.options.leaves.size, 0, 10, 0.01, (val) => {
     tree.options.leaves.size = val;
     onChange();
   });
@@ -1047,7 +1062,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   trellisDimensionsSubsection.add(trellisHeightSlider);
   controls.push({ control: trellisHeightSlider, update: () => trellisHeightSlider.setValue(tree.options.trellis.height) });
 
-  const trellisSpacingSlider = createSlider('Spacing', tree.options.trellis.spacing, 0.5, 10, 0.1, (val) => {
+  const trellisSpacingSlider = createSlider('Spacing', tree.options.trellis.spacing, 0.1, 10, 0.01, (val) => {
     tree.options.trellis.spacing = val;
     onChange();
   });
@@ -1081,7 +1096,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // Appearance subsection
   const trellisAppearanceSubsection = createSubSection('Appearance');
-  const trellisCylinderRadiusSlider = createSlider('Cylinder Radius', tree.options.trellis.cylinderRadius, 0.01, 0.5, 0.01, (val) => {
+  const trellisCylinderRadiusSlider = createSlider('Cylinder Radius', tree.options.trellis.cylinderRadius, 0.001, 0.5, 0.001, (val) => {
     tree.options.trellis.cylinderRadius = val;
     onChange();
   });
@@ -1100,6 +1115,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // ----- Camera Section -----
   const cameraSection = createSection('Camera', 'videoCamera', false);
+  cameraSection.add(createButton('Frame Entire Tree', 'videoCamera', () =>
+    frameTree(tree, camera, orbitControls, environment.skybox.sun)));
 
   const autoRotateToggle = createToggle('Auto Rotate', orbitControls.autoRotate, (val) => {
     orbitControls.autoRotate = val;
@@ -1189,19 +1206,11 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   exportStatus.className = 'control-label';
   exportStatus.setAttribute('role', 'status');
 
-  function exportMaterial(material) {
-    const copy = material.clone();
-    for (const key of ['map', 'aoMap', 'normalMap', 'roughnessMap', 'metalnessMap']) {
-      if (copy[key] && !copy[key].image) copy[key] = null;
-    }
-    return copy;
-  }
-
   function snapshotModel() {
     const group = new THREE.Group();
     group.name = 'Tree';
     for (const mesh of [tree.branchesMesh, tree.leavesMesh]) {
-      const snapshot = new THREE.Mesh(mesh.geometry, exportMaterial(mesh.material));
+      const snapshot = new THREE.Mesh(mesh.geometry, mesh.material.clone());
       snapshot.name = mesh.material.name === 'leaves' ? 'Leaves' : 'Branches';
       group.add(snapshot);
     }
@@ -1209,13 +1218,17 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     return group;
   }
 
-  function addExport(label, action) {
+  function addExport(label, action, allLevels = false) {
     exportModelsSection.add(createButton(label, 'download', async ({ setStatus }) => {
       exportStatus.textContent = '';
       const level = previewLevel;
       const model = snapshotModel();
+      const source = allLevels ? new Tree() : null;
+      source?.options.copy(tree.options);
+      const levels = structuredClone(details);
       try {
-        await action(model, level, setStatus);
+        await Promise.all(model.children.slice(0, 2).map(mesh => prepareExportMaterial(mesh.material)));
+        await action(model, level, setStatus, { source, levels });
       } catch (error) {
         exportStatus.textContent = 'Export failed. ' + error.message;
         console.error(error);
@@ -1238,12 +1251,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     download(exportUSD(model), `tree_LOD${level}.usd`);
   });
 
-  async function exportLevels(model, format, setStatus) {
-    const levels = structuredClone(details);
-    const source = new Tree();
-    source.options.copy(tree.options);
+  async function exportLevels(model, format, setStatus, { source, levels }) {
     const files = {};
-    const textures = format === 'usd' ? await collectBarkTextures(model.children[0].material, files) : {};
+    const textures = format === 'usd' ? await collectTextures(model, files) : {};
     for (const [i, detail] of levels.entries()) {
       setStatus(`Exporting LOD ${i + 1}/${levels.length}...`);
       await paint();
@@ -1263,8 +1273,15 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     await paint();
     download(new Blob([zipSync(files, { level: 1 })], { type: 'application/zip' }), `tree_${format}_lods.zip`);
   }
-  addExport('GLB LODs (ZIP)', (model, level, status) => exportLevels(model, 'glb', status));
-  addExport('USD LODs + Bark Textures (ZIP)', (model, level, status) => exportLevels(model, 'usd', status));
+  addExport('USD + Textures (Current Level ZIP)', async (model, level, setStatus) => {
+    setStatus('Packing USD...');
+    const files = {};
+    const textures = await collectTextures(model, files);
+    files[`tree_LOD${level}.usd`] = new Uint8Array(await exportUSD(model, textures).arrayBuffer());
+    download(new Blob([zipSync(files, { level: 1 })]), `tree_LOD${level}_usd.zip`);
+  });
+  addExport('GLB LODs (ZIP)', (model, level, status, settings) => exportLevels(model, 'glb', status, settings), true);
+  addExport('USD LODs + Textures (ZIP)', (model, level, status, settings) => exportLevels(model, 'usd', status, settings), true);
   exportModelsSection.add(exportStatus);
 
   const exportPngBtn = createButton('Export PNG', 'photo', async ({ setStatus }) => {
@@ -1339,6 +1356,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
           const preset = JSON.parse(e.target.result);
           // Resolve bark textures locally, including presets saved by older versions.
           delete preset.bark?.maps;
+          delete preset.leaves?.maps;
           // Older presets have no mesh settings and open at the original resolution.
           details = defaultDetails();
           for (const [i, detail] of details.entries()) {
@@ -1354,6 +1372,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
           tree.options.copy(preset);
           applyTreeTextures(tree);
           tree.generate(details[previewLevel]);
+          frameTree(tree, camera, orbitControls, environment.skybox.sun);
           fitTarget = null;
           refreshOptimization();
           refreshAllControls();

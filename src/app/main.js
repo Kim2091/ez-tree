@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.NeutralToneMapping;
-  renderer.toneMappingExposure = 2;
+  renderer.toneMappingExposure = 1.22;
   container.appendChild(renderer.domElement);
 
   const { scene, environment, tree, camera, controls } = await createScene(renderer);

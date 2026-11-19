@@ -7,6 +7,8 @@ test('the surface of each blade or needle encloses a volume at every resolution'
     for (const leafDetail of ['full', 'reduced', 'coarse']) {
       const tree = new Tree();
       tree.options.leaves.type = type;
+      tree.options.branch.levels = 0;
+      tree.options.leaves.count = 1;
       tree.generate({ leafDetail });
       const g = tree.leavesMesh.geometry;
       const numPlacements = tree.skeleton.leaves.length;
@@ -67,4 +69,33 @@ test('each shipped preset fits the budget, including its visible trellis', () =>
     tree.trellisMesh?.traverseVisible(mesh => { if (mesh.isMesh) triangles += mesh.geometry.index.count / 3; });
     assert(triangles <= target && leaves.index.count > 0, preset);
   }
+});
+
+test('bark UVs follow the trunk and retain the same coordinates when rings are skipped', () => {
+  const tree = new Tree();
+  tree.loadPreset('Oak Medium');
+  const full = tree.branchesMesh.geometry.attributes.uv;
+  const reduced = tree.createGeometry({ sectionStride: 3 }).branches.attributes.uv;
+  const rowSize = tree.options.branch.segments[0] + 1;
+  const sections = tree.options.branch.sections[0];
+  for (let ring = 1; ring <= sections; ring++) {
+    assert(full.getY(ring * rowSize) > full.getY((ring - 1) * rowSize));
+    if (ring % 3 === 0) assert.equal(reduced.getY(ring / 3 * rowSize), full.getY(ring * rowSize));
+  }
+});
+
+test('compound leaflets have individual surface UVs while the whole leaf shares one wind attachment', () => {
+  const tree = new Tree();
+  tree.loadPreset('Ash Small');
+  const { uv, leafFlex } = tree.leavesMesh.geometry.attributes;
+  const perLeaf = uv.count / tree.skeleton.leaves.length;
+  let leafletRoots = 0;
+  for (let i = 0; i < perLeaf; i++) {
+    if (uv.getY(i) === 0 && leafFlex.getX(i) > 0) {
+      assert.equal(uv.getX(i), 0.5);
+      leafletRoots++;
+    }
+  }
+  assert.equal(leafletRoots, 5);
+  assert.equal(leafFlex.getX(0), 0);
 });

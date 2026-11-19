@@ -16,7 +16,7 @@ function array(parts, name, count, item, interpolation) {
 
 const meshKind = mesh => ({ branches: 'Bark', leaves: 'Leaves' }[mesh.material.name] ?? 'Trellis');
 
-function writeMesh(parts, mesh, name, kind) {
+function writeMesh(parts, mesh, name, kind, textures) {
   const g = mesh.geometry;
   const { position, normal, uv, color } = g.attributes;
   const tint = mesh.material.color;
@@ -38,6 +38,10 @@ function writeMesh(parts, mesh, name, kind) {
   array(parts, 'color3f[] primvars:displayColor', color?.count ?? 1, i => color
     ? tuple(color.getX(i) * tint.r, color.getY(i) * tint.g, color.getZ(i) * tint.b)
     : tuple(tint.r, tint.g, tint.b), color ? 'vertex' : 'constant');
+  if (color && textures?.color) {
+    array(parts, 'float4[] primvars:surfaceTint', color.count, i =>
+      tuple(color.getX(i) * tint.r, color.getY(i) * tint.g, color.getZ(i) * tint.b, 1), 'vertex');
+  }
   parts.push('    }\n');
 }
 
@@ -48,7 +52,7 @@ function material(kind, mesh, textures) {
     ['color', 'diffuseColor', 'color3f', 'rgb'],
     ['normal', 'normal', 'normal3f', 'rgb'],
     ['roughness', 'roughness', 'float', 'r'],
-  ].filter(([map]) => kind === 'Bark' && textures[map]);
+  ].filter(([map]) => textures[map]);
   const surface = [
     '            color3f inputs:diffuseColor.connect = <' + path + '/Color.outputs:result>',
     '            float inputs:roughness = ' + number(mesh.material.roughness),
@@ -66,6 +70,13 @@ function material(kind, mesh, textures) {
             string inputs:varname = "st"
             float2 outputs:result
         }`;
+  const vertexTint = textures.color && mesh.material.vertexColors;
+  if (vertexTint) nodes += `
+        def Shader "Tint" {
+            uniform token info:id = "UsdPrimvarReader_float4"
+            string inputs:varname = "surfaceTint"
+            float4 outputs:result
+        }`;
   for (const [map, input, type, output] of channels) {
     const scale = map === 'normal' ? '(2, 2, 2, 1)' : tuple(tint.r, tint.g, tint.b, 1);
     nodes += `
@@ -76,7 +87,8 @@ function material(kind, mesh, textures) {
             token inputs:sourceColorSpace = "${map === 'color' ? 'sRGB' : 'raw'}"
             token inputs:wrapS = "repeat"
             token inputs:wrapT = "repeat"
-            ${map === 'roughness' ? '' : 'float4 inputs:scale = ' + scale}
+            ${map === 'color' && vertexTint ? 'float4 inputs:scale.connect = <' + path + '/Tint.outputs:result>'
+              : map === 'roughness' ? '' : 'float4 inputs:scale = ' + scale}
             ${map === 'normal' ? 'float4 inputs:bias = (-1, -1, -1, 0)' : ''}
             ${output === 'r' ? 'float' : 'float3'} outputs:${output}
         }`;
@@ -106,25 +118,29 @@ export function exportUSD(root, textures = {}) {
     const n = instances.get(kind) ?? 0;
     instances.set(kind, n + 1);
     materials.set(kind, mesh);
-    writeMesh(parts, mesh, n ? kind + '_' + n : kind, kind);
+    writeMesh(parts, mesh, n ? kind + '_' + n : kind, kind, textures[kind]);
   });
   parts.push('    def Scope "Looks"\n    {\n');
-  for (const [kind, mesh] of materials) parts.push(material(kind, mesh, textures));
+  for (const [kind, mesh] of materials) parts.push(material(kind, mesh, textures[kind] ?? {}));
   parts.push('    }\n}\n');
   return new Blob(parts, { type: 'application/octet-stream' });
 }
 
 // Pack each referenced image once for all LOD stages.
-export async function collectBarkTextures(material, files) {
+export async function collectTextures(root, files) {
   const textures = {};
-  for (const [channel, key] of [['color', 'map'], ['roughness', 'roughnessMap'], ['normal', 'normalMap']]) {
-    const src = material[key]?.image?.src;
-    if (!src) continue;
-    const name = 'textures/' + new URL(src).pathname.split('/').pop();
-    const response = await fetch(src);
-    if (!response.ok) throw new Error('Could not read ' + name);
-    files[name] = new Uint8Array(await response.arrayBuffer());
-    textures[channel] = name;
+  for (const mesh of root.children.filter(child => child.isMesh)) {
+    const maps = {};
+    for (const [channel, key] of [['color', 'map'], ['roughness', 'roughnessMap'], ['normal', 'normalMap']]) {
+      const src = mesh.material[key]?.image?.src;
+      if (!src) continue;
+      const name = 'textures/' + new URL(src).pathname.split('/').pop();
+      const response = await fetch(src);
+      if (!response.ok) throw new Error('Could not read ' + name);
+      files[name] = new Uint8Array(await response.arrayBuffer());
+      maps[channel] = name;
+    }
+    textures[meshKind(mesh)] = maps;
   }
   return textures;
 }

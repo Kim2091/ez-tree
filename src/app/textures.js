@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import { TreePreset } from '@dgreenheck/ez-tree';
+import { LeafType, TreePreset } from '@dgreenheck/ez-tree';
 
 // Bark keys map 1:1 to ambientcg directories under /textures/bark/.
 // Add or remove entries to expose more variants in the UI dropdown.
 export const BarkType = {
+  Aspen: 'Aspen',
   Bark001: 'Bark001',
   Bark002: 'Bark002',
   Bark003: 'Bark003',
@@ -18,57 +19,50 @@ export const BarkType = {
 };
 
 const textureLoader = new THREE.TextureLoader();
-const barkCache = new Map();
+const sets = new Map();
+const ready = new WeakMap();
 
-// The onError callbacks below matter: a texture whose file is missing keeps
-// an undefined image forever (the dev server masks the 404 by serving
-// index.html). That renders harmlessly but breaks GLTF export, so a failed
-// load must remove the map from the cache entirely.
-
-function loadColor(url, onError) {
-  const t = textureLoader.load(url, undefined, undefined, onError);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-function loadLinear(url, onError) {
-  return textureLoader.load(url, undefined, undefined, onError);
-}
-
-/**
- * Returns a cached set of THREE.Texture maps for the given bark type.
- * @param {string} type - one of BarkType values
- * @returns {{ color: THREE.Texture, normal: THREE.Texture, roughness: THREE.Texture } | null}
- */
-export function getBarkMaps(type) {
-  if (!BarkType[type]) return null;
-  if (barkCache.has(type)) return barkCache.get(type);
-
-  const dir = `${type}_1K-JPG`;
-  const base = `/textures/bark/${dir}/${dir}`;
+function surfaceMaps(base) {
+  if (sets.has(base)) return sets.get(base);
   const maps = {};
-  const drop = (key) => () => {
-    console.warn(`Missing bark texture: ${base}_… (${key}); skipping this map.`);
-    maps[key] = null;
-  };
-  maps.color = loadColor(`${base}_Color.jpg`, drop('color'));
-  maps.normal = loadLinear(`${base}_NormalGL.jpg`, drop('normal'));
-  maps.roughness = loadLinear(`${base}_Roughness.jpg`, drop('roughness'));
-  barkCache.set(type, maps);
+  for (const [channel, suffix] of [['color', 'Color'], ['normal', 'NormalGL'], ['roughness', 'Roughness']]) {
+    const url = base + '_' + suffix + '.jpg';
+    let texture;
+    const loaded = new Promise(resolve => {
+      texture = textureLoader.load(url, () => resolve(true), undefined, () => {
+        maps[channel] = null;
+        console.warn('Missing surface map: ' + url);
+        resolve(false);
+      });
+    });
+    if (channel === 'color') texture.colorSpace = THREE.SRGBColorSpace;
+    if (channel !== 'normal') texture.userData.mimeType = 'image/jpeg';
+    texture.anisotropy = 4;
+    maps[channel] = texture;
+    ready.set(texture, loaded);
+  }
+  sets.set(base, maps);
   return maps;
 }
 
-/**
- * Assigns the bark textures for the current preset.
- * @param {import('@dgreenheck/ez-tree').Tree} tree
- */
-export function applyTreeTextures(tree) {
-  const barkMaps = getBarkMaps(tree.options.bark.type);
-  if (barkMaps) {
-    tree.options.bark.maps.color = barkMaps.color;
-    tree.options.bark.maps.normal = barkMaps.normal;
-    tree.options.bark.maps.roughness = barkMaps.roughness;
+// The user can export immediately after changing species. Wait for the maps
+// attached to this export snapshot, including any still being decoded.
+export async function prepareExportMaterial(material) {
+  for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
+    const map = material[key];
+    if (!map) continue;
+    await ready.get(map);
+    if (!map.image) material[key] = null;
   }
+}
+
+export function applyTreeTextures(tree) {
+  const bark = tree.options.bark, leaf = tree.options.leaves;
+  const barkType = Object.hasOwn(BarkType, bark.type) ? bark.type : BarkType.Bark001;
+  const dir = barkType + '_1K-JPG';
+  Object.assign(bark.maps, surfaceMaps('/textures/bark/' + dir + '/' + dir));
+  const shape = Object.values(LeafType).includes(leaf.type) ? leaf.type : LeafType.Oak;
+  Object.assign(leaf.maps, surfaceMaps('/textures/foliage/' + shape));
 }
 
 /**
