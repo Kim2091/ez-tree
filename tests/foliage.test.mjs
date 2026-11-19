@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DoubleSide, FrontSide, ShaderLib, Texture, Vector2, Vector3 } from 'three';
+import { DoubleSide, FrontSide, Line3, ShaderLib, Texture, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
 
 test('the full, reduced and coarse blades enclose a volume', () => {
@@ -72,8 +72,8 @@ test('each shipped preset fits the budget with closed or thin blades, including 
       assert(triangles <= target && leaves.index.count > 0, preset);
       assert.equal(leaves.userData.doubleSided, thinLeaves);
       if (preset === 'Ash Medium') {
-        assert.equal(leaves.userData.leafSites, thinLeaves ? 1434 : 385);
-        assert.equal(triangles, thinLeaves ? 24992 : 24192);
+        assert.equal(leaves.userData.leafSites, thinLeaves ? 1605 : 385);
+        assert.equal(triangles, thinLeaves ? 24972 : 24192);
       }
     }
   }
@@ -174,8 +174,88 @@ test('bark UVs follow the trunk and retain the same coordinates when rings are s
   const sections = tree.options.branch.sections[0];
   for (let ring = 1; ring <= sections; ring++) {
     assert(full.getY(ring * rowSize) > full.getY((ring - 1) * rowSize));
-    if (ring % 3 === 0) assert.equal(reduced.getY(ring / 3 * rowSize), full.getY(ring * rowSize));
   }
+  const originals = Array.from({length: sections + 1}, (_, i) => full.getY(i * rowSize));
+  const kept = Array.from({length: Math.ceil(sections / 3) + 1}, (_, i) => reduced.getY(i * rowSize));
+  assert.deepEqual(kept, originals.filter(v => kept.includes(v)));
+  assert.equal(kept[0], originals[0]);
+  assert.equal(kept.at(-1), originals.at(-1));
+});
+
+test('thinning preserves ash pairs at the fitted quota and keeps roots on simplified wood', () => {
+  const tree = new Tree();
+  tree.loadPreset('Ash Medium');
+  const detail = tree.fitTriangleBudget(25000, {thinLeaves: true});
+  const g = tree.createGeometry(detail).leaves;
+  const pos = g.attributes.position, nodes = new Map();
+  const step = pos.count / g.userData.leafSites;
+  for (let i = 0; i < pos.count; i += step) {
+    const key = [pos.getX(i), pos.getY(i), pos.getZ(i)].join(',');
+    nodes.set(key, (nodes.get(key) ?? 0) + 1);
+  }
+  assert([...nodes.values()].filter(n => n === 2).length >= 300);
+  assert.deepEqual(tree.createGeometry(detail).leaves.attributes.position.array, pos.array);
+  tree.options.branch.levels = 0;
+  tree.options.branch.sections[0] = 8;
+  tree.generate({leafDetail: 'thin', sectionStride: 16});
+  const sections = tree.skeleton.branches[0].sections;
+  const trunk = new Line3(sections[0].origin, sections.at(-1).origin);
+  const roots = tree.leavesMesh.geometry.attributes.position;
+  for (let i = 0; i < roots.count; i += roots.count / tree.skeleton.leaves.length) {
+    const p = new Vector3().fromBufferAttribute(roots, i);
+    assert(trunk.closestPointToPoint(p, true, new Vector3()).distanceTo(p) < 1e-5);
+  }
+});
+
+test('each textured broadleaf triangle samples one face and preserves its original blade UVs', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 0;
+  tree.options.leaves.textured = true;
+  tree.options.leaves.maps.normal = new Texture();
+  tree.options.leaves.maps.normal.channel = 1;
+  for (const leafDetail of ['full', 'reduced', 'coarse', 'thin']) {
+    tree.generate({leafDetail});
+    const g = tree.leavesMesh.geometry, {uv, uv1} = g.attributes;
+    const sides = new Set();
+    for (let i = 0; i < g.index.count; i += 3) {
+      const ids = [0, 1, 2].map(j => g.index.getX(i + j));
+      const side = Math.round(2 * uv1.getX(ids[0]) - uv.getX(ids[0]));
+      for (const v of ids) {
+        assert(Math.abs(2 * uv1.getX(v) - side - uv.getX(v)) < 1e-6);
+        assert.equal(uv1.getY(v), uv.getY(v));
+      }
+      sides.add(side);
+    }
+    assert.equal(sides.size, leafDetail === 'thin' ? 1 : 2);
+    assert.equal(tree.leavesMesh.material.alphaTest, 0);
+  }
+});
+
+test('simplified side shoots and terminal continuations stay joined to translated parents', () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 2;
+  for (let i = 0; i <= 2; i++) tree.options.branch.sections[i] = 8;
+  tree.generate({sectionStride: 16, leafDetail: 'thin'});
+  const p = tree.branchesMesh.geometry.attributes.position;
+  const centers = new Map();
+  let first = 0, displaced = 0;
+  for (const {sections, segmentCount, attachment} of tree.skeleton.branches) {
+    const lo = sections[0].origin, hi = sections.at(-1).origin;
+    const shift = new Vector3();
+    if (attachment) {
+      const {a, b, f} = attachment;
+      const expected = new Vector3().lerpVectors(centers.get(a), centers.get(b), f);
+      const actual = new Vector3();
+      for (let j = 0; j < segmentCount; j++) actual.add(new Vector3().fromBufferAttribute(p, first + j));
+      assert(actual.divideScalar(segmentCount).distanceTo(expected) < 1e-5);
+      shift.subVectors(expected, lo);
+      if (shift.length() > 1e-4) displaced++;
+    }
+    sections.forEach((s, i) => centers.set(s,
+      new Vector3().lerpVectors(lo, hi, i / (sections.length - 1)).add(shift)));
+    first += 2 * (segmentCount + 1);
+  }
+  assert(displaced > 0);
 });
 
 test('compound leaflets have individual surface UVs while the whole leaf shares one wind attachment', () => {

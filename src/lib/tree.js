@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import RNG from './rng';
-import { Branch } from './branch';
+import { Branch, applyAttachmentOffset } from './branch';
 import { TreeType } from './enums';
 import { meshFoliage, trianglesPerLeaf } from './foliage';
 import TreeOptions from './options';
@@ -22,7 +22,55 @@ function sampleBranch(sections, t) {
     frame: new THREE.Quaternion().setFromEuler(a.orientation)
       .slerp(new THREE.Quaternion().setFromEuler(b.orientation), f),
     radius: THREE.MathUtils.lerp(a.radius, b.radius, f),
+    attachment: { a, b, f },
   };
+}
+
+// Keep both ends, then split the interval with the largest centerline error
+// until it has the same number of rings as uniform sampling at this stride.
+function branchRings(sections, stride, offsets) {
+  if (stride === 1 || sections.length < 3) return sections;
+  const last = sections.length - 1;
+  const spans = Math.ceil(last / stride);
+  const ids = [0, last];
+  const point = new THREE.Vector3();
+  while (ids.length <= spans) {
+    let maxError = -1, best = 0, insert = 0;
+    for (let j = 1; j < ids.length; j++) {
+      const a = ids[j - 1], b = ids[j];
+      for (let i = a + 1; i < b; i++) {
+        point.lerpVectors(sections[a].origin, sections[b].origin, (i - a) / (b - a));
+        const error = point.distanceToSquared(sections[i].origin);
+        if (error > maxError) { maxError = error; best = i; insert = j; }
+      }
+    }
+    ids.splice(insert, 0, best);
+  }
+  for (let j = 1; j < ids.length; j++) {
+    const a = ids[j - 1], b = ids[j];
+    for (let i = a + 1; i < b; i++) {
+      const shift = new THREE.Vector3().lerpVectors(sections[a].origin, sections[b].origin, (i - a) / (b - a));
+      offsets.set(sections[i], shift.sub(sections[i].origin));
+    }
+  }
+  return ids.map(i => sections[i]);
+}
+
+// Estimate visible centerline displacement, weighted by projected branch
+// area (length times radius). Straight stems can give their rings to leaves.
+function branchShapeError(branches, stride, leafSize) {
+  if (stride === 1) return 0;
+  let error = 0, area = 0;
+  const offsets = new Map();
+  for (const { sections, baseRadius } of branches) {
+    offsets.clear();
+    branchRings(sections, stride, offsets);
+    const weight = sections.at(-1).distance * baseRadius;
+    area += weight;
+    const normalize = Math.max(1e-6, leafSize + baseRadius) * (sections.length - 1);
+    for (const shift of offsets.values()) error += shift.length() * weight / normalize;
+  }
+  return error / Math.max(area, 1e-6);
 }
 
 export class Tree extends THREE.Group {
@@ -82,7 +130,7 @@ export class Tree extends THREE.Group {
 
   /**
    * @typedef {Object} LODDetail
-   * @property {number} [sectionStride=1] Sample every Nth section ring; the
+   * @property {number} [sectionStride=1] Average spacing of retained rings. The
    *   first and last rings are always kept so branch endpoints stay put
    * @property {number} [segmentFactor=1] Radial segment multiplier;
    *   segments = max(3, round(segmentCount * segmentFactor))
@@ -312,11 +360,15 @@ export class Tree extends THREE.Group {
       windFactor: []
     };
 
+    const offsets = new Map();
     for (const skeletonBranch of this.skeleton.branches) {
-      this.#meshBranch(branches, skeletonBranch, sectionStride, segmentFactor);
+      this.#meshBranch(branches, skeletonBranch, sectionStride, segmentFactor, offsets);
     }
 
-    const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves.type, leafStride, leafScale, detail.leafDetail);
+    const maps = this.options.leaves.maps;
+    const faceUVs = this.options.leaves.textured && (maps?.roughness?.channel === 1 || maps?.normal?.channel === 1);
+    const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves.type, leafStride, leafScale,
+      detail.leafDetail, offsets, faceUVs);
     return { branches, leaves };
   }
 
@@ -336,6 +388,9 @@ export class Tree extends THREE.Group {
     const bladeDetails = thinLeaves ? ['thin'] : ['full', 'reduced', 'coarse'];
     let best, bestExcess = Infinity, bestPenalty = Infinity;
     for (const sectionStride of [1, 2, 3, 4, 6, 8, 16]) {
+      const ringPenalty = thinLeaves
+        ? 0.30 * Math.log2(sectionStride) + 2 * branchShapeError(this.skeleton.branches, sectionStride, this.options.leaves.size)
+        : 0.55 * Math.log2(sectionStride);
       for (const segmentFactor of [1, 0.75, 0.5, 0.25]) {
         let branches = fixed;
         for (const { sections, segmentCount } of this.skeleton.branches) {
@@ -351,7 +406,7 @@ export class Tree extends THREE.Group {
           const excess = Math.max(0, total - target);
           // Prefer preserving occupied leaf sites before spending on blade detail.
           const penalty = 1.8 * Math.log2(leafStride) + tier
-            + 0.55 * Math.log2(sectionStride) + 0.4 * Math.log2(1 / segmentFactor);
+            + ringPenalty + 0.4 * Math.log2(1 / segmentFactor);
           if (excess < bestExcess || (excess === bestExcess && penalty < bestPenalty)) {
             bestExcess = excess;
             bestPenalty = penalty;
@@ -472,12 +527,14 @@ export class Tree extends THREE.Group {
       segmentCount: branch.segmentCount,
       baseRadius: branch.radius,
       trunk: branch.level === 0,
+      attachment: branch.attachment,
     });
 
     // Deciduous trees have a terminal branch that grows out of the
     // end of the parent branch
     if (this.options.type === 'deciduous') {
       const lastSection = sections[sections.length - 1];
+      const endAttachment = { a: lastSection, b: lastSection, f: 0 };
 
       if (branch.level < this.options.branch.levels) {
         this.branchQueue.push(
@@ -493,10 +550,11 @@ export class Tree extends THREE.Group {
             branch.sectionCount,
             branch.segmentCount,
             branch.vigor,
+            endAttachment,
           ),
         );
       } else {
-        this.#recordLeaf(lastSection.origin, lastSection.orientation);
+        this.#recordLeaf(lastSection.origin, lastSection.orientation, 1, endAttachment);
       }
     }
 
@@ -544,7 +602,7 @@ export class Tree extends THREE.Group {
         angle = phase + tier * goldenAngle + turn * (i % perWhorl) / members + this.rng.random(0.13, -0.13);
       }
       const t = start + (1 - start) * slot;
-      const { origin, frame, radius } = sampleBranch(sections, t);
+      const { origin, frame, radius, attachment } = sampleBranch(sections, t);
       const crownAngle = evergreen && level === 1 ? 1.08 - 0.63 * slot * slot : 1;
       const opening = THREE.MathUtils.degToRad(opt.angle[level] * crownAngle * this.rng.random(1.14, 0.86));
       let direction = new THREE.Vector3(Math.sin(angle) * Math.sin(opening), Math.cos(opening),
@@ -563,7 +621,7 @@ export class Tree extends THREE.Group {
         : 0.72 + 0.34 * Math.sin(Math.PI * slot);
       const vigor = parentVigor * envelope * this.rng.random(1.16, 0.84);
       this.branchQueue.push(new Branch(origin, orientation, opt.length[level] * vigor,
-        radius * opt.radius[level], level, opt.sections[level], opt.segments[level], vigor));
+        radius * opt.radius[level], level, opt.sections[level], opt.segments[level], vigor, attachment));
     }
   }
 
@@ -577,7 +635,7 @@ export class Tree extends THREE.Group {
     const nodes = paired ? Math.ceil(count / 2) : count;
     for (let n = 0; n < nodes; n++) {
       const t = start + (1 - start) * (n + this.rng.random(0.85, 0.15)) / nodes;
-      const { origin, frame } = sampleBranch(sections, t);
+      const { origin, frame, attachment } = sampleBranch(sections, t);
       const azimuth = phase + n * (paired ? Math.PI / 2 : goldenAngle) + this.rng.random(0.18, -0.18);
       const members = paired ? Math.min(2, count - 2 * n) : 1;
       for (let k = 0; k < members; k++) {
@@ -594,7 +652,7 @@ export class Tree extends THREE.Group {
         side.normalize().applyAxisAngle(axis, this.rng.random(0.72, -0.72));
         const normal = new THREE.Vector3().crossVectors(side, axis);
         const rotation = new THREE.Euler().setFromRotationMatrix(new THREE.Matrix4().makeBasis(side, axis, normal));
-        this.#recordLeaf(origin, rotation, type === 'pine' ? Math.min(1, 0.58 + vigor) : 1);
+        this.#recordLeaf(origin, rotation, type === 'pine' ? Math.min(1, 0.58 + vigor) : 1, attachment);
       }
     }
   }
@@ -605,7 +663,7 @@ export class Tree extends THREE.Group {
   * @param {THREE.Vector3} origin The starting point of the leaf
   * @param {THREE.Euler} orientation The orientation of the leaf
   */
-  #recordLeaf(origin, orientation, scale = 1) {
+  #recordLeaf(origin, orientation, scale = 1, attachment) {
     const size =
       this.options.leaves.size * scale *
       (1 +
@@ -619,6 +677,7 @@ export class Tree extends THREE.Group {
       origin: origin.clone(),
       orientation: orientation.clone(),
       size,
+      attachment,
     });
   }
 
@@ -626,10 +685,10 @@ export class Tree extends THREE.Group {
    * Emits the ring geometry and indices for one skeleton branch
    * @param {{verts: number[], normals: number[], indices: number[], uvs: number[]}} buffers
    * @param {{sections: {origin: THREE.Vector3, orientation: THREE.Euler, radius: number}[], segmentCount: number, baseRadius: number}} skeletonBranch
-   * @param {number} sectionStride Sample every Nth section ring
+   * @param {number} sectionStride Average spacing of retained section rings
    * @param {number} segmentFactor Radial segment multiplier
    */
-  #meshBranch(buffers, skeletonBranch, sectionStride, segmentFactor) {
+  #meshBranch(buffers, skeletonBranch, sectionStride, segmentFactor, offsets) {
     const { sections, segmentCount, baseRadius } = skeletonBranch;
 
     // Terminal branches inherit the parent's segmentCount, so parent and
@@ -646,14 +705,13 @@ export class Tree extends THREE.Group {
       Math.round(turn * baseRadius * this.options.bark.textureScale.x),
     );
 
-    // Sample every Nth ring, always keeping the first and last so branch
-    // endpoints (and parent/child junctions) stay put across detail levels.
-    const sampled = [];
-    for (let i = 0; i < sections.length; i += sectionStride) {
-      sampled.push(sections[i]);
-    }
-    if ((sections.length - 1) % sectionStride !== 0) {
-      sampled.push(sections[sections.length - 1]);
+    const sampled = branchRings(sections, sectionStride, offsets);
+    const translation = applyAttachmentOffset(new THREE.Vector3(), skeletonBranch.attachment, offsets);
+    if (translation.lengthSq() > 0) {
+      for (const section of sections) {
+        if (offsets.has(section)) offsets.get(section).add(translation);
+        else offsets.set(section, translation);
+      }
     }
 
     // Used later for geometry index generation
@@ -679,7 +737,7 @@ export class Tree extends THREE.Group {
         const vertex = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle))
           .multiplyScalar(radius)
           .applyEuler(section.orientation)
-          .add(section.origin);
+          .add(section.origin).add(translation);
 
         const dr = flare * (-1.45 * Math.sin(5 * angle + phase) - 0.48 * Math.sin(3 * angle - phase)) / (1 + flare * lobe);
         const normal = new THREE.Vector3(Math.cos(angle) + dr * Math.sin(angle),
@@ -737,6 +795,7 @@ export class Tree extends THREE.Group {
     g.setAttribute('position', attribute(buffers.verts, 3));
     g.setAttribute('normal', attribute(buffers.normals, 3));
     g.setAttribute('uv', attribute(buffers.uvs, 2));
+    if (buffers.faceUVs) g.setAttribute('uv1', attribute(buffers.faceUVs, 2));
     if (buffers.colors) g.setAttribute('color', attribute(buffers.colors, 3));
     if (buffers.flex) {
       g.setAttribute('leafFlex', attribute(buffers.flex, 1));

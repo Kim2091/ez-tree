@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { LeafType } from './enums';
+import { selectLeafSites } from './canopy';
+import { applyAttachmentOffset } from './branch';
 
 // Each pair gives the distance along the blade and its half-width. The first
 // and last points are single vertices. The intermediate rings make a closed
@@ -34,6 +36,7 @@ const thinStations = new Map([
 
 function makeTemplate(type, detail, variant) {
   const positions = [], colors = [], indices = [], uvs = [];
+  const lowerFaces = [];
   const color = new THREE.Color({
     oak: 0x66864a, aspen: 0x83a357, ash: 0x749553, pine: 0x4c7861,
   }[type]);
@@ -47,7 +50,7 @@ function makeTemplate(type, detail, variant) {
     );
     const halfWidth = Math.max(...profile.map(row => row[1]));
     const broad = profile !== stalk && profile !== needle;
-    function vertex(x, y, z, tone) {
+    function vertex(x, y, z, tone, underside = false) {
       // Project each individual blade in its own frame. Compound leaves and
       // needles each get a root-to-tip texture with their own central vein.
       uvs.push(0.5 + x / (2 * halfWidth) * (profile === stalk ? 0.025 : 0.96), y);
@@ -68,7 +71,9 @@ function makeTemplate(type, detail, variant) {
       z += variant * (0.07 * y * y + 0.25 * x * curve);
       point.set(x, y, z).multiplyScalar(length).applyQuaternion(orientation);
       positions.push(point.x, point.y + base, point.z);
-      colors.push(color.r * tone, color.g * tone, color.b * tone);
+      const pale = broad && underside;
+      colors.push(color.r * tone * (pale ? 1.36 : 1), color.g * tone * (pale ? 1.20 : 1),
+        color.b * tone * (pale ? 1.65 : 1));
       return positions.length / 3 - 1;
     }
 
@@ -116,11 +121,16 @@ function makeTemplate(type, detail, variant) {
       ];
       // Separate the two sides of the blade at the margin. Shared normals
       // on a knife edge cancel out and make a thin leaf look folded in half.
-      if (softEdge) ring.push(vertex(width, y, right - lip, 1.04));
-      ring.push(vertex(0, y, ridge - depth, 1.12));
-      if (softEdge) ring.push(vertex(-width, y, bend - lip, 1.02));
+      if (softEdge) ring.push(vertex(width, y, right - lip, 1.04, true));
+      const rib = broad ? 0.045 * width * (1 - y) : 0;
+      ring.push(vertex(0, y, ridge - depth - rib, 1.12, true));
+      if (softEdge) ring.push(vertex(-width, y, bend - lip, 1.02, true));
       for (let side = 0; side < ring.length; side++) {
         const next = (side + 1) % ring.length;
+        if (broad && (softEdge ? side === 3 || side === 4 : side >= 2)) {
+          lowerFaces[indices.length / 3] = true;
+          if (previous) lowerFaces[indices.length / 3 + 1] = true;
+        }
         if (previous) {
           indices.push(previous[side], previous[next], ring[side],
             previous[next], ring[next], ring[side]);
@@ -132,6 +142,7 @@ function makeTemplate(type, detail, variant) {
     }
     const tip = vertex(0, 1, profile === stalk ? 0 : -0.065, 1.04);
     for (let side = 0; side < previous.length; side++) {
+      if (broad && (softEdge ? side === 3 || side === 4 : side >= 2)) lowerFaces[indices.length / 3] = true;
       indices.push(previous[side], previous[(side + 1) % previous.length], tip);
     }
   }
@@ -159,7 +170,7 @@ function makeTemplate(type, detail, variant) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  return { positions, colors, indices, uvs, normals: geometry.attributes.normal.array };
+  return { positions, colors, indices, uvs, lowerFaces, normals: geometry.attributes.normal.array };
 }
 
 const templates = new Map();
@@ -178,24 +189,37 @@ export function trianglesPerLeaf(type, detail) {
   return getTemplate(type, detail)[0].indices.length / 3;
 }
 
-// Keep one site from each block. Choosing the lowest stable priority keeps
-// nested LODs consistent and avoids always taking the same side of leaf pairs.
-function retainedSite(start, end) {
-  let best = start, bestRank = Infinity;
-  for (let i = start; i < end; i++) {
-    let hash = Math.imul(i ^ (i >>> 16), 0x45d9f3b);
-    hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
-    const rank = (hash ^ (hash >>> 16)) >>> 0;
-    if (rank < bestRank) { best = i; bestRank = rank; }
-  }
-  return best;
+// Only the normal and roughness maps use an atlas. Split shared vertices
+// at chart seams, carrying over their original positions and smooth normals.
+const atlasTemplates = new WeakMap();
+function withFaceUVs(source) {
+  if (atlasTemplates.has(source)) return atlasTemplates.get(source);
+  const result = { positions: [], colors: [], normals: [], uvs: [], faceUVs: [], indices: [] };
+  const vertices = new Map();
+  source.indices.forEach((v, corner) => {
+    const side = source.lowerFaces[Math.floor(corner / 3)] ? 1 : 0;
+    const key = 2 * v + side;
+    if (!vertices.has(key)) {
+      vertices.set(key, vertices.size);
+      for (const name of ['positions', 'colors', 'normals']) {
+        result[name].push(...source[name].slice(v * 3, v * 3 + 3));
+      }
+      const u = source.uvs[2 * v], t = source.uvs[2 * v + 1];
+      result.uvs.push(u, t);
+      result.faceUVs.push((u + side) * 0.5, t);
+    }
+    result.indices.push(vertices.get(key));
+  });
+  atlasTemplates.set(source, result);
+  return result;
 }
 
 // Bake the local template into a single indexed mesh for rendering and GLB.
 // Allocate once at the final size, since dense presets can have thousands of
 // placements. Use the original skeleton index at every LOD for stable color.
-export function meshFoliage(placements, type, stride, scale, detail) {
-  const variants = getTemplate(type, detail);
+export function meshFoliage(placements, type, stride, scale, detail, offsets, useFaceUVs) {
+  const originals = getTemplate(type, detail);
+  const variants = useFaceUVs ? originals.map(withFaceUVs) : originals;
   const topology = variants[0];
   const count = scale > 0 ? Math.ceil(placements.length / stride) : 0;
   const perLeaf = topology.positions.length / 3;
@@ -204,19 +228,20 @@ export function meshFoliage(placements, type, stride, scale, detail) {
   const normals = new Float32Array(vertices * 3);
   const colors = new Float32Array(vertices * 3);
   const uvs = new Float32Array(vertices * 2);
+  const faceUVs = useFaceUVs ? new Float32Array(vertices * 2) : null;
   const flex = new Float32Array(vertices);
   const IndexArray = vertices > 65535 ? Uint32Array : Uint16Array;
   const indices = new IndexArray(count * topology.indices.length);
   const orientation = new THREE.Quaternion();
   const point = new THREE.Vector3();
 
-  // Fractional spacing uses the entire site range, including the final twig.
-  const spacing = Number.isInteger(stride) ? stride : placements.length / count;
+  const origin = new THREE.Vector3();
+  const selected = count > 0 && count < placements.length
+    ? selectLeafSites(placements, count, scale, type === LeafType.Ash, offsets) : null;
   for (let k = 0; k < count; k++) {
-    const first = Math.floor(k * spacing);
-    const end = k === count - 1 ? placements.length : Math.floor((k + 1) * spacing);
-    const i = stride === 1 ? first : retainedSite(first, end);
+    const i = selected ? selected[k] : k;
     const leaf = placements[i];
+    applyAttachmentOffset(origin.copy(leaf.origin), leaf.attachment, offsets);
     const start = k * perLeaf;
     orientation.setFromEuler(leaf.orientation);
     const size = leaf.size * scale;
@@ -227,7 +252,7 @@ export function meshFoliage(placements, type, stride, scale, detail) {
       const src = 3 * j;
       const dst = 3 * (start + j);
       point.fromArray(template.positions, src).applyQuaternion(orientation)
-        .multiplyScalar(size).add(leaf.origin).toArray(verts, dst);
+        .multiplyScalar(size).add(origin).toArray(verts, dst);
       point.fromArray(template.normals, src).applyQuaternion(orientation).toArray(normals, dst);
       colors[dst] = template.colors[src] * brightness * (0.92 + 0.22 * phase);
       colors[dst + 1] = template.colors[src + 1] * brightness;
@@ -235,10 +260,11 @@ export function meshFoliage(placements, type, stride, scale, detail) {
       flex[start + j] = template.positions[src + 1] * size;
     }
     uvs.set(template.uvs, 2 * start);
+    if (faceUVs) faceUVs.set(template.faceUVs, 2 * start);
     const firstIndex = k * template.indices.length;
     for (let j = 0; j < template.indices.length; j++) {
       indices[firstIndex + j] = start + template.indices[j];
     }
   }
-  return { verts, normals, uvs, colors, indices, flex, leafSites: count, doubleSided: detail === 'thin' };
+  return { verts, normals, uvs, faceUVs, colors, indices, flex, leafSites: count, doubleSided: detail === 'thin' };
 }

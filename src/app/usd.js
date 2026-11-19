@@ -38,6 +38,9 @@ function writeMesh(parts, mesh, name, kind, textures) {
   array(parts, 'normal3f[] normals', normal.count, i => tuple(normal.getX(i), normal.getY(i), normal.getZ(i)), 'vertex');
   const repeat = mesh.material.map?.repeat ?? { x: 1, y: 1 };
   if (uv) array(parts, 'texCoord2f[] primvars:st', uv.count, i => tuple(uv.getX(i) * repeat.x, uv.getY(i) * repeat.y), 'vertex');
+  const faceUV = g.attributes.uv1;
+  if (faceUV && textures) array(parts, 'texCoord2f[] primvars:st1', faceUV.count,
+    i => tuple(faceUV.getX(i), faceUV.getY(i)), 'vertex');
   array(parts, 'color3f[] primvars:displayColor', color?.count ?? 1, i => color
     ? tuple(color.getX(i) * tint.r, color.getY(i) * tint.g, color.getZ(i) * tint.b)
     : tuple(tint.r, tint.g, tint.b), color ? 'vertex' : 'constant');
@@ -50,7 +53,7 @@ function writeMesh(parts, mesh, name, kind, textures) {
 
 // A second surface terminal lets MaterialX-capable renderers use a thin-walled
 // scattering material while other USD viewers use the universal preview surface.
-function leafMaterialX(path, textures, scattering) {
+function leafMaterialX(path, textures, scattering, faceMaps) {
   const out = name => `<${path}/${name}.outputs:out>`;
   const node = (name, id, type, inputs) => `
         def Shader "${name}" {
@@ -60,7 +63,7 @@ function leafMaterialX(path, textures, scattering) {
         }`;
   const image = (name, map, type, mxType) => node(name, 'image_' + mxType, type, [
     `asset inputs:file = @${textures[map]}@` + (map === 'color' ? ' (colorSpace = "srgb_texture")' : ''),
-    `float2 inputs:texcoord.connect = ${out('LeafUV')}`,
+    `float2 inputs:texcoord.connect = ${out(faceMaps.has(map) ? 'LeafFaceUV' : 'LeafUV')}`,
   ]);
   const nodes = [
     node('LeafUV', 'texcoord_vector2', 'float2', ['int inputs:index = 0']),
@@ -71,6 +74,7 @@ function leafMaterialX(path, textures, scattering) {
       `float inputs:in2.connect = <${path}.inputs:subsurfaceStrength>`,
     ]),
   ];
+  if (faceMaps.size) nodes.push(node('LeafFaceUV', 'geompropvalue_vector2', 'float2', ['string inputs:geomprop = "st1"']));
   const surface = [
     'bool inputs:thin_walled = true',
     `float inputs:subsurface.connect = ${out('ScatterWeight')}`,
@@ -101,6 +105,8 @@ function leafMaterialX(path, textures, scattering) {
 function material(kind, mesh, textures) {
   const path = '/Tree/Looks/' + kind;
   const tint = mesh.material.color;
+  const faceMaps = new Set(['normal', 'roughness'].filter(key =>
+    textures[key] && mesh.material[key + 'Map']?.channel === 1 && mesh.geometry.attributes.uv1));
   const channels = [
     ['color', 'diffuseColor', 'color3f', 'rgb'],
     ['normal', 'normal', 'normal3f', 'rgb'],
@@ -123,6 +129,12 @@ function material(kind, mesh, textures) {
             string inputs:varname = "st"
             float2 outputs:result
         }`;
+  if (faceMaps.size) nodes += `
+        def Shader "FaceUV" {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st1"
+            float2 outputs:result
+        }`;
   const vertexTint = textures.color && mesh.material.vertexColors;
   if (vertexTint) nodes += `
         def Shader "Tint" {
@@ -136,7 +148,7 @@ function material(kind, mesh, textures) {
         def Shader "${map}Map" {
             uniform token info:id = "UsdUVTexture"
             asset inputs:file = @${textures[map]}@
-            float2 inputs:st.connect = <${path}/UV.outputs:result>
+            float2 inputs:st.connect = <${path}/${faceMaps.has(map) ? 'FaceUV' : 'UV'}.outputs:result>
             token inputs:sourceColorSpace = "${map === 'color' ? 'sRGB' : 'raw'}"
             token inputs:wrapS = "repeat"
             token inputs:wrapT = "repeat"
@@ -150,7 +162,7 @@ function material(kind, mesh, textures) {
     else if (map === 'roughness') surface[1] = connection;
     else surface.push(connection);
   }
-  if (textures.subsurface) nodes += leafMaterialX(path, textures, mesh.material.leafScattering);
+  if (textures.subsurface) nodes += leafMaterialX(path, textures, mesh.material.leafScattering, faceMaps);
   return `    def Material "${kind}" {
         token outputs:surface.connect = <${path}/Surface.outputs:surface>
         def Shader "Surface" {

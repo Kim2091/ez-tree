@@ -29,6 +29,13 @@ export function leafDiffuseTransmission(writer) {
   return {
     name,
     writeMaterial(material, definition) {
+      // This Three.js exporter spells the metallic/roughness UV selector
+      // "channel". glTF readers consume "texCoord" on textureInfo.
+      const mr = definition.pbrMetallicRoughness?.metallicRoughnessTexture;
+      if (mr && 'channel' in mr) {
+        mr.texCoord = mr.channel;
+        delete mr.channel;
+      }
       const scattering = material.leafScattering;
       if (!scattering?.map) return;
       definition.extensions ??= {};

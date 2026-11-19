@@ -17,13 +17,17 @@ def noise(rng, samples):
     return np.asarray(tile.resize((SIZE, SIZE), Image.Resampling.BICUBIC)).astype(float) / 255 - 0.5
 
 
-def save_maps(base, pigment, height, roughness):
-    base.parent.mkdir(exist_ok=True, parents=True)
+def normal_pixels(height):
     dy, dx = np.gradient(height)
     normals = np.stack([-dx, dy, np.ones_like(dx)], axis=-1)
     normals /= np.linalg.norm(normals, axis=-1, keepdims=True)
+    return (normals + 1) * 127.5
+
+
+def save_maps(base, pigment, height, roughness):
+    base.parent.mkdir(exist_ok=True, parents=True)
     for suffix, pixels in [
-        ("Color", pigment), ("NormalGL", (normals + 1) * 127.5), ("Roughness", roughness * 255),
+        ("Color", pigment), ("NormalGL", normal_pixels(height)), ("Roughness", roughness * 255),
     ]:
         img = Image.fromarray(np.clip(pixels, 0, 255).astype(np.uint8))
         img.save(base.with_name(base.name + "_" + suffix + ".jpg"), quality=93, subsampling=0)
@@ -97,6 +101,18 @@ def leaf(species, seed, veins):
     roughness = 0.60 + 0.11 * broad + 0.08 * fine + 0.045 * relief
     base = PUBLIC / "foliage" / species
     save_maps(base, pigment, height, roughness)
+    if species != "pine":
+        # Each panel has the same 1K root-to-tip layout as color and scattering.
+        # The waxier upper surface has shallower veins. The pale lower face
+        # has a projecting midrib and branching veins underneath the blade.
+        under = height + 2.7 * midrib + 1.25 * secondary
+        for suffix, upper, lower in [
+            ("NormalGL", normal_pixels(0.80 * height), normal_pixels(under)),
+            ("Roughness", 255 * (roughness - 0.10), 255 * (roughness + 0.14)),
+        ]:
+            pixels = np.concatenate([upper, lower], axis=1)
+            Image.fromarray(np.clip(pixels, 0, 255).astype(np.uint8)).save(
+                base.with_name(species + "_Faces_" + suffix + ".jpg"), quality=93, subsampling=0)
     mask = np.rint(255 * np.clip(scatter, 0, 1)).astype(np.uint8)
     Image.fromarray(mask).save(base.with_name(species + "_Subsurface.png"))
 

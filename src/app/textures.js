@@ -22,13 +22,14 @@ const textureLoader = new THREE.TextureLoader();
 const sets = new Map();
 const ready = new WeakMap();
 
-function surfaceMaps(base, foliage = false) {
+function surfaceMaps(base, species) {
   if (sets.has(base)) return sets.get(base);
   const maps = {};
   const channels = [['color', 'Color.jpg'], ['normal', 'NormalGL.jpg'], ['roughness', 'Roughness.jpg']];
-  if (foliage) channels.push(['subsurface', 'Subsurface.png']);
+  if (species) channels.push(['subsurface', 'Subsurface.png']);
   for (const [channel, file] of channels) {
-    const url = base + '_' + file;
+    const sided = species && species !== LeafType.Pine && (channel === 'normal' || channel === 'roughness');
+    const url = base + (sided ? '_Faces_' : '_') + file;
     let texture;
     const loaded = new Promise(resolve => {
       texture = textureLoader.load(url, () => resolve(true), undefined, () => {
@@ -38,6 +39,7 @@ function surfaceMaps(base, foliage = false) {
       });
     });
     if (channel === 'color') texture.colorSpace = THREE.SRGBColorSpace;
+    if (sided) texture.channel = 1;
     if (channel === 'color' || channel === 'roughness') texture.userData.mimeType = 'image/jpeg';
     texture.anisotropy = 4;
     maps[channel] = texture;
@@ -69,7 +71,7 @@ export function applyTreeTextures(tree) {
   const dir = barkType + '_1K-JPG';
   Object.assign(bark.maps, surfaceMaps('/textures/bark/' + dir + '/' + dir));
   const shape = Object.values(LeafType).includes(leaf.type) ? leaf.type : LeafType.Oak;
-  Object.assign(leaf.maps, surfaceMaps('/textures/foliage/' + shape, true));
+  Object.assign(leaf.maps, surfaceMaps('/textures/foliage/' + shape, shape));
 }
 
 /**

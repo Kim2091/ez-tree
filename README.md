@@ -19,6 +19,8 @@ The tree, shrub, and trellis presets use metre-scale dimensions. Ash carries pai
 
 Each blade has root-to-tip UVs for 1024 × 1024 color, normal, roughness, and subsurface maps. The grayscale subsurface PNG stores a linear weight. Lighter tissue transmits more diffuse light, and the dark veins and midrib transmit less. Each species has its own map. In **Leaves**, enable **Surface Textures** and adjust **Subsurface Strength** from 0 to 1. The default is 0.65. The effect uses the existing mesh at every LOD.
 
+Closed oak, aspen, and ash blades have a waxier upper surface and a paler, rougher underside with more pronounced vein relief. Their normal and roughness images contain two 1024 × 1024 panels sampled through a second UV set. Color and subsurface weight use the original blade UVs. Thin blades share the upper panel across their two visible faces. Pine uses its needle-specific maps.
+
 ![The same backlit aspen blade with scattering off and at the default strength](docs/aspen-backlight.jpg)
 
 Bark UVs follow branch length through every LOD. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
@@ -29,9 +31,13 @@ Open **Mesh Optimization** and select the LOD you want to edit. **Fit to Budget*
 
 LOD0 defaults to **Full** for close-ups. LOD1 and LOD2 default to **Thin (denser canopy)**. You can override the blade detail on each level or click **Fit to Budget** to fit the selected level. Each thin ash leaf keeps its five individually textured leaflets and stem in 12 triangles. An oak blade uses 6 triangles, an aspen blade uses 4, and a five-needle pine cluster uses 10. Thin blades render from both sides and retain their surface maps. Full detail gives close-ups finer margins and modeled edge thickness.
 
-The shipped Ash Medium seed has 2,589,828 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 385 compound leaves in 24,192 total triangles. Thin blades keep 1,434 compound leaves in 24,992 total triangles. Both fits use one bark mesh and one foliage mesh.
+The fitter keeps rings at branch bends and moves twig and leaf attachments with the simplified wood. When thinning foliage it compares projected leaf density with the full crown from four directions. Local quotas spread the retained leaves across shoots and reserve room for opposite ash pairs.
+
+The shipped Ash Medium seed has 2,589,828 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 385 compound leaves in 24,192 total triangles. Thin blades keep 1,605 compound leaves in 24,972 total triangles, including 419 complete opposite pairs. Both fits use one bark mesh and one foliage mesh.
 
 ![Same Ash Medium tree and camera at a 25,000-triangle budget, with standard leaves on the left and thin leaves on the right](docs/ash-leaf-budget.jpg)
+
+![Previous and updated Ash Medium canopies at the same budget, and both faces of a full-detail aspen blade](docs/canopy-leaf-surfaces.jpg)
 
 ## Export
 
@@ -89,7 +95,7 @@ tree.generateLODs([
     distance: 80,
     hysteresis: 0.05,
     detail: {
-      sectionStride: 3,    // sample every 3rd ring along each branch
+      sectionStride: 3,    // keep about one ring in three, favoring bends
       segmentFactor: 0.75, // reduce radial segments to 75% (min 3)
       leafStride: 2,       // keep every 2nd leaf...
       leafScale: 1.4,      // ...enlarged to preserve canopy coverage

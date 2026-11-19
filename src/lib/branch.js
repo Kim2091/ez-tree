@@ -1,5 +1,14 @@
 import * as THREE from 'three';
 
+export function applyAttachmentOffset(point, attachment, offsets) {
+  if (attachment && offsets.size) {
+    const { a, b, f } = attachment;
+    if (offsets.has(a)) point.addScaledVector(offsets.get(a), 1 - f);
+    if (offsets.has(b)) point.addScaledVector(offsets.get(b), f);
+  }
+  return point;
+}
+
 export class Branch {
   /**
    * Generates a new branch
@@ -17,6 +26,7 @@ export class Branch {
     sectionCount = 0,
     segmentCount = 0,
     vigor = 1,
+    attachment,
   ) {
     this.origin = origin.clone();
     this.orientation = orientation.clone();
@@ -26,5 +36,6 @@ export class Branch {
     this.sectionCount = sectionCount;
     this.segmentCount = segmentCount;
     this.vigor = vigor;
+    this.attachment = attachment;
   }
 }
