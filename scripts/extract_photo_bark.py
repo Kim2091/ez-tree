@@ -2,8 +2,8 @@
 
 Example: python scripts/extract_photo_bark.py --source-dir "C:/.../trees"
 Large native-resolution photographic crops are wrapped along narrow low-error
-paths. Pixels outside those seam regions remain unchanged. No source
-photographs are copied to the repository.
+paths. The furrowed crop receives a selective yellow color correction. No
+source photographs are copied to the repository.
 """
 from argparse import ArgumentParser
 from pathlib import Path
@@ -67,6 +67,20 @@ def make_tile(pixels):
     return Image.fromarray(tile, "RGB")
 
 
+def reduce_yellow(image):
+    """Reduce yellow lichen color while retaining luminance and photo detail."""
+    pixels = np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
+    for start in range(0, pixels.shape[0], 512):
+        end = min(start + 512, pixels.shape[0])
+        color = pixels[start:end].astype(np.float32) / 255
+        r, g, b = color[..., 0], color[..., 1], color[..., 2]
+        mask = np.clip((np.minimum(r, g) - b - 0.015) / 0.11, 0, 1)
+        mask *= np.clip((g - r + 0.22) / 0.13, 0, 1) * 0.8
+        gray = (0.2126 * r + 0.7152 * g + 0.0722 * b)[..., None]
+        pixels[start:end] = np.uint8(np.clip(np.rint((color + (gray - color) * mask[..., None]) * 255), 0, 255))
+    return Image.fromarray(pixels, "RGB")
+
+
 def main():
     parser = ArgumentParser(description=__doc__)
     parser.add_argument("--source-dir", required=True, type=Path)
@@ -74,6 +88,8 @@ def main():
     args = parser.parse_args()
     for name, (filename, box) in SOURCES.items():
         result = make_tile(crop_photo(args.source_dir / filename, box))
+        if name == "PhotoFurrowed":
+            result = reduce_yellow(result)
         folder = args.output_dir / f"{name}_1K-JPG"
         folder.mkdir(parents=True, exist_ok=True)
         output = folder / f"{name}_1K-JPG_Color.png"
