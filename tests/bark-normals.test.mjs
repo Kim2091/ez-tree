@@ -106,3 +106,13 @@ test('lateral branches have a geometric collar that tapers away from the junctio
   }
   assert.fail('Expected a lateral branch');
 });
+
+test('bark UV phases vary between limbs and reproduce for the same seed', () => {
+  const tree = new Tree(); tree.loadPreset('Ash Small'); tree.options.bark.damage = 0; tree.generate();
+  const offsets = tree.skeleton.branches.filter(branch => branch.barkOffset > 0).map(branch => branch.barkOffset);
+  assert(offsets.length > 10);
+  assert(new Set(offsets.map(value => value.toFixed(4))).size > 10);
+  const uv = tree.branchesMesh.geometry.attributes.uv.array.slice();
+  tree.generate();
+  assert.deepEqual(tree.branchesMesh.geometry.attributes.uv.array, uv);
+});

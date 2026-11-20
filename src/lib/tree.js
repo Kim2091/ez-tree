@@ -827,6 +827,9 @@ export class Tree extends THREE.Group {
       sections,
       segmentCount: branch.segmentCount,
       baseRadius: branch.radius,
+      // A stable independent phase prevents identical bark features from
+      // lining up on neighboring limbs, without changing growth randomness.
+      barkOffset: branch.level === 0 ? 0 : new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x6c8e9cf5)).random(),
       trunk: branch.level === 0,
       attachment: branch.attachment,
     });
@@ -1163,7 +1166,7 @@ export class Tree extends THREE.Group {
         // Physical distance keeps bark grain continuous through rings and LOD switches.
         const uv = new THREE.Vector2(
           (j / segments) * wrapsX,
-          section.distance / tileHeight,
+          section.distance / tileHeight + (skeletonBranch.barkOffset ?? 0),
         );
 
         buffers.verts.push(...Object.values(vertex));
