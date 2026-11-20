@@ -3,6 +3,28 @@ import test from 'node:test';
 import { Vector3 } from 'three';
 import { LeafType, Tree } from '../build/ez-tree.es.js';
 
+test('the crown has uneven fork spacing, unequal scaffolds and repeatable growth', () => {
+  const tree = new Tree();
+  tree.options.leaves.count = 0;
+  tree.options.seed = 38;
+  const samples = variation => {
+    tree.options.branch.structureVariation = variation;
+    tree.generate();
+    const [trunk, ...others] = tree.skeleton.branches;
+    const limbs = others.filter(b => trunk.sections.includes(b.attachment?.a) && b.attachment.a !== b.attachment.b);
+    return limbs.map(({sections, baseRadius, attachment: a}) =>
+      [a.a.distance + (a.b.distance - a.a.distance) * a.f, baseRadius, ...sections.at(-1).origin.toArray()]);
+  };
+  const regular = samples(0), varied = samples(0.85);
+  assert.equal(varied.length, regular.length);
+  assert(varied.length > 4);
+  for (const column of [0, 1, 2, 3, 4]) {
+    assert(varied.some((row, i) => Math.abs(row[column] - regular[i][column]) > 0.01));
+  }
+  assert.deepEqual(samples(0.85), varied);
+  assert.deepEqual(samples(0), regular);
+});
+
 test('a terminal broad leaf opens toward the sky on a twisted shoot and stays attached across LODs', () => {
   const tree = new Tree();
   tree.options.branch.levels = 0;

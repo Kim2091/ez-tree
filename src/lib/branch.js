@@ -1,5 +1,16 @@
 import * as THREE from 'three';
 
+// An interval represents a season's extension. Short extensions cluster
+// neighboring attachments, long ones leave bare wood between forks.
+export function growthIntervals(count, variation, rng) {
+  const bounds = [0];
+  for (let i = 0; i < count; i++) {
+    bounds.push(bounds[i] + Math.exp(variation * rng.random(1.1, -1.1)));
+  }
+  const total = bounds[count];
+  return bounds.map(value => value / total);
+}
+
 export function applyAttachmentOffset(point, attachment, offsets) {
   if (attachment && offsets.size) {
     const { a, b, f } = attachment;

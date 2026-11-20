@@ -56,11 +56,31 @@ function makeTemplate(type, detail, variant, damagePattern) {
     const partCount = type === LeafType.Ash ? 5 : type === LeafType.Pine ? 3 : 1;
     const damaged = damagePattern >= 0 && profile !== stalk && bladeIndex++ === damagePattern % partCount;
     const side = damagePattern % 2 ? 1 : -1;
+    const rolled = damagePattern >= 8 && damagePattern < 12;
+    const creased = damagePattern >= 12;
     const tornTip = profile === needle || damagePattern % 4 >= 2;
-    const biteHeight = damagePattern >= 4 ? 0.62 : 0.48;
+    const biteHeight = (damagePattern >= 4 ? 0.62 : 0.48) + variant * 0.035;
     function vertex(x, y, z, tone, underside = false) {
       let dry = 0;
-      if (damaged && tornTip) {
+      // Curling and bending keep the tissue attached to its original veins.
+      const originalX = x, originalY = y;
+      if (damaged && rolled) {
+        const edge = Math.max(0, side * x / halfWidth);
+        const roll = THREE.MathUtils.smoothstep(y, 0.16, 0.77) * (broad ? edge : 1);
+        x *= 1 - 0.40 * roll;
+        x += (broad ? 0 : side * 0.065) * roll;
+        z -= (broad ? 0.95 * halfWidth : 0.11) * roll;
+        dry = (broad ? 0.82 : 0.95) * roll;
+      } else if (damaged && creased) {
+        // Hinge only the distal blade around an oblique crease. Each side
+        // retains its area, including on the sparse two-sided template.
+        const hinge = 0.50 + 0.09 * variant + 0.11 * side * x / halfWidth;
+        const reach = Math.max(0, y - hinge);
+        const bend = 0.65 + 0.15 * variant;
+        y -= (1 - Math.cos(bend)) * reach;
+        z -= Math.sin(bend) * reach;
+        dry = 0.48 * THREE.MathUtils.smoothstep(reach, 0, 0.24);
+      } else if (damaged && tornTip) {
         // An oblique tear ends the veins early. Compress the last stations
         // into a curled lip, keeping both faces and the very end watertight.
         const cut = (profile === needle ? 0.60 : 0.74) + 0.12 * side * x / halfWidth;
@@ -81,7 +101,8 @@ function makeTemplate(type, detail, variant, damagePattern) {
       }
       // Project each individual blade in its own frame. Compound leaves and
       // needles each get a root-to-tip texture with their own central vein.
-      uvs.push(0.5 + x / (2 * halfWidth) * (profile === stalk ? 0.025 : 0.96), y);
+      const bent = damaged && (rolled || creased);
+      uvs.push(0.5 + (bent ? originalX : x) / (2 * halfWidth) * (profile === stalk ? 0.025 : 0.96), bent ? originalY : y);
       const curve = Math.sin(Math.PI * y);
       if (broad) {
         // Offset each margin independently. Oak lobes sweep forward from the
@@ -285,7 +306,7 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
       hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
       hash ^= hash >>> 13;
       if ((hash & 0xffff) < damage * 65536) {
-        const pattern = hash >>> 29;
+        const pattern = hash >>> 28;
         worn[pattern] ??= getTemplate(type, detail, pattern);
         template = worn[pattern][pose];
         if (useFaceUVs) template = withFaceUVs(template);

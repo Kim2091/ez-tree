@@ -17,6 +17,10 @@ Choose a tree preset, then open **Leaves** to adjust leaf shape, density, size, 
 
 The tree, shrub, and trellis presets use metre-scale dimensions. Ash carries pairs of compound leaves, oak grows larger spreading limbs, aspen has a slender pale trunk, and pine branches grow in whorls with lateral sprays of needles. The updated growth model changes the shape produced by earlier seeds. The same seed and settings reproduce a tree within this version.
 
+**Branches → Structure Variation** defaults to 0.75. It varies the gaps between forks, the length and girth of neighboring limbs, and how far their tips turn upward. A broadleaf lateral can compete with the leader, while pine keeps its tiers. Set the control to zero to recover the previous branching pattern for the same seed.
+
+![The same Ash Medium seed from the same camera with leaves hidden, at zero and default structure variation](docs/ash-branch-structure.jpg)
+
 Each blade has root-to-tip UVs for 1024 × 1024 color, normal, roughness, and subsurface maps. The grayscale subsurface PNG stores a linear weight. Lighter tissue transmits more diffuse light, and the dark veins and midrib transmit less. Each species has its own map. In **Leaves**, enable **Surface Textures** and adjust **Subsurface Strength** from 0 to 1. The default is 0.65. The effect uses the existing mesh at every LOD.
 
 Closed oak, aspen, and ash blades have a waxier upper surface and a paler, rougher underside with more pronounced vein relief. Their normal and roughness images contain two 1024 × 1024 panels sampled through a second UV set. Color and subsurface weight use the original blade UVs. Thin blades share the upper panel across their two visible faces. Pine uses its needle-specific maps.
@@ -29,7 +33,9 @@ Closed oak, aspen, and ash blades have a waxier upper surface and a paler, rough
 
 Bark UVs follow branch length through every LOD. Bark normals follow the slope of each taper so narrowing twigs catch light along their length. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
 
-**Leaves → Leaf Damage** defaults to 0.18. It gives some broad leaves bites along one edge or a torn, browned tip. An ash leaf can lose part of one leaflet, and a pine cluster can carry a shortened needle. **Bark → Bark Chipping** defaults to 0.25 and cuts occasional recessed slivers into the trunk and thicker branches. Set either control to zero for a clean surface. Increasing a control reveals more damage at repeatable sites. Leaf wear uses existing triangles, and the fitter reserves 10 triangles per bark chip.
+**Leaves → Leaf Damage** defaults to 0.18. A blade can have a bitten margin, torn tip, dry rolled edge, or a crease that bends the tip while keeping its veins intact. Ash damage affects one leaflet, and individual pine needles can dry, kink or break. **Bark → Bark Chipping** defaults to 0.25 and adds narrow splits, splinters, and broader shallow scrapes to the trunk and thicker branches. Freshly exposed wood is warmer, while older wounds fade toward gray. Set either control to zero for a clean surface. Increasing a control reveals more damage at repeatable sites. Leaf wear uses existing triangles, and the fitter reserves 14 triangles per bark wound.
+
+![Close-ups of a rolled margin, a bent leaf tip, and splintered, split and scraped bark](docs/wear-varieties.jpg)
 
 ![The same aspen leaf intact and with a bite along its edge, alongside a recessed bark chip](docs/leaf-and-bark-damage.jpg)
 
@@ -41,7 +47,7 @@ LOD0 defaults to **Full** for close-ups. LOD1 and LOD2 default to **Thin (denser
 
 The fitter keeps rings at branch bends and moves twig and leaf attachments with the simplified wood. When thinning foliage it compares projected leaf density with the full crown from four directions. Local quotas spread the retained leaves across shoots and reserve room for opposite ash pairs.
 
-With the default damage settings, the shipped Ash Medium seed has 2,589,878 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 385 compound leaves in 24,242 total triangles. Thin blades keep 1,600 compound leaves in 24,962 total triangles. Both fits use one bark mesh and one foliage mesh. The comparisons below were rendered with chipping off.
+With the default branch and damage settings, the shipped Ash Medium seed has 2,241,046 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 357 compound leaves in 24,202 total triangles. Thin blades keep 1,644 compound leaves in 24,954 total triangles. Both fits use one bark mesh and one foliage mesh. The comparisons below were rendered with chipping and structure variation off.
 
 ![Same Ash Medium tree and camera at a 25,000-triangle budget, with standard leaves on the left and thin leaves on the right](docs/ash-leaf-budget.jpg)
 

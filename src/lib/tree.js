@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RNG from './rng';
 import { chipTrianglesAdded, cutBarkChip } from './bark-chip';
-import { Branch, applyAttachmentOffset } from './branch';
+import { Branch, applyAttachmentOffset, growthIntervals } from './branch';
 import { TreeType } from './enums';
 import { meshFoliage, trianglesPerLeaf } from './foliage';
 import TreeOptions from './options';
@@ -446,6 +446,15 @@ export class Tree extends THREE.Group {
     let sectionOrigin = branch.origin.clone();
     const sectionLength = branch.length / branch.sectionCount;
     let bendX = 0, bendZ = 0;
+    const variation = THREE.MathUtils.clamp(this.options.branch.structureVariation ?? 0, 0, 1);
+    let leaderAxis, handoff, leaderBend;
+    if (variation && branch.level === 0 && this.options.type === TreeType.Deciduous) {
+      const rng = new RNG(this.options.seed ^ 0x6ac07385);
+      const heading = rng.random(turn);
+      leaderAxis = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
+      handoff = rng.random(0.68, 0.38);
+      leaderBend = variation * Math.min(1, 30 * Math.abs(this.options.branch.gnarliness[0])) * rng.random(0.43, 0.20);
+    }
 
     // This information is used for generating child branches after the branch
     // geometry has been constructed
@@ -498,6 +507,13 @@ export class Tree extends THREE.Group {
       );
 
       qSection.multiply(qTwist);
+      if (leaderBend) {
+        // A lateral bud takes over the leader partway up the trunk; the lower
+        // bole stays upright and the upper stem carries the change of heading.
+        const transfer = t => THREE.MathUtils.smoothstep(t, handoff - 0.16, handoff + 0.16);
+        const step = transfer((i + 1) / branch.sectionCount) - transfer(i / branch.sectionCount);
+        qSection.premultiply(new THREE.Quaternion().setFromAxisAngle(leaderAxis, leaderBend * step));
+      }
 
       // Rotate the section's growth direction toward force.direction (positive
       // strength) or away from it (negative). The (sectionUp × target) axis
@@ -507,6 +523,15 @@ export class Tree extends THREE.Group {
       // slerp form was degenerate at qForce=identity and pushed branches in
       // whatever random direction the section had drifted.
       const sectionUp = new THREE.Vector3(0, 1, 0).applyQuaternion(qSection);
+      if (branch.sweep) {
+        // Loaded wood sags near the fork; its growing tip turns back up.
+        const liftAxis = new THREE.Vector3().crossVectors(sectionUp, up);
+        if (liftAxis.lengthSq() > 1e-8) {
+          const bend = branch.sweep * (2.8 * (i + 0.5) / branch.sectionCount - 1) / branch.sectionCount;
+          qSection.premultiply(new THREE.Quaternion().setFromAxisAngle(liftAxis.normalize(), bend));
+          sectionUp.copy(up).applyQuaternion(qSection);
+        }
+      }
       const target = new THREE.Vector3()
         .copy(this.options.branch.force.direction)
         .normalize();
@@ -516,7 +541,10 @@ export class Tree extends THREE.Group {
         axis.divideScalar(sinFull);
         const fullAngle = Math.atan2(sinFull, sectionUp.dot(target));
         const step = this.options.branch.force.strength / Math.max(sectionRadius, 0.12);
-        const clamped = Math.max(-fullAngle, Math.min(fullAngle, step));
+        // Ease the response near the light direction so fine twigs retain
+        // their own headings instead of all snapping upright.
+        const response = step > 0 ? 1 - variation * (1 - Math.min(1, fullAngle * 0.8)) : 1;
+        const clamped = Math.max(-fullAngle, Math.min(fullAngle, step)) * response;
         qSection.premultiply(
           new THREE.Quaternion().setFromAxisAngle(axis, clamped),
         );
@@ -541,6 +569,7 @@ export class Tree extends THREE.Group {
     const chip = branch.radius > 0.045 && branch.length > 0.12 ? {
       threshold: chipRng.random() * (branch.level === 0 ? 0.24 : 1),
       height: chipRng.random(0.77, 0.16), angle: chipRng.random(), lean: chipRng.random(0.65, -0.65),
+      kind: ['sliver', 'split', 'scrape'][Math.floor(chipRng.random() * 3)], age: chipRng.random(),
     } : null;
     this.skeleton.branches.push({
       chip,
@@ -635,10 +664,17 @@ export class Tree extends THREE.Group {
   generateChildBranches(count, level, sections, parentVigor = 1) {
     const opt = this.options.branch;
     const evergreen = this.options.type === TreeType.Evergreen;
+    const variation = THREE.MathUtils.clamp(opt.structureVariation ?? 0, 0, 1);
+    const growth = new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length, 0x27d4eb2d));
+    if (count > 1 && level > 1) count = Math.max(1, Math.round(count * (1 + variation * growth.random(0.26, -0.45))));
     const start = opt.start[level];
     const phase = this.rng.random(turn);
     const perWhorl = Math.min(count, 5);
     const whorls = Math.ceil(count / perWhorl);
+    const tiered = evergreen && level === 1;
+    const bounds = count > 0 && variation > 0 ? growthIntervals(tiered ? whorls : count, variation, growth) : null;
+    const dominant = Math.floor(growth.random() * count);
+    const openSide = growth.random(turn);
     for (let i = 0; i < count; i++) {
       let slot = (i + this.rng.random(0.85, 0.15)) / count;
       let angle = phase + goldenAngle * i + this.rng.random(0.28, -0.28);
@@ -648,10 +684,22 @@ export class Tree extends THREE.Group {
         slot = (tier + this.rng.random(0.87, 0.13)) / whorls;
         angle = phase + tier * goldenAngle + turn * (i % perWhorl) / members + this.rng.random(0.13, -0.13);
       }
+      if (bounds) {
+        const n = tiered ? Math.floor(i / perWhorl) : i;
+        const local = slot * (tiered ? whorls : count) - n;
+        slot = THREE.MathUtils.lerp(bounds[n], bounds[n + 1], local);
+        angle += variation * growth.random(tiered ? 0.34 : 0.70, tiered ? -0.34 : -0.70);
+      }
       const t = start + (1 - start) * slot;
       const { origin, frame, radius, attachment } = sampleBranch(sections, t);
       const crownAngle = evergreen && level === 1 ? 1.08 - 0.63 * slot * slot : 1;
-      const opening = THREE.MathUtils.degToRad(opt.angle[level] * crownAngle * this.rng.random(1.14, 0.86));
+      // One broadleaf lateral can compete with the leader. Its siblings
+      // spread at wider angles and have unequal access to the open crown.
+      const competitor = !evergreen && count > 1 && i === dominant;
+      const exposure = Math.cos(angle - openSide);
+      const reach = competitor ? 0.42 : 0.25 * exposure + growth.random(0.17, -0.20);
+      const forkAngle = competitor ? -0.34 : growth.random(0.39, -0.16);
+      const opening = THREE.MathUtils.degToRad(opt.angle[level] * crownAngle * this.rng.random(1.14, 0.86) * (1 + variation * forkAngle));
       let direction = new THREE.Vector3(Math.sin(angle) * Math.sin(opening), Math.cos(opening),
         Math.cos(angle) * Math.sin(opening)).applyQuaternion(frame);
       if (evergreen && level > 1) {
@@ -666,9 +714,12 @@ export class Tree extends THREE.Group {
       const orientation = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(up, direction));
       const envelope = evergreen && level === 1 ? Math.pow(1 - t, 0.65)
         : 0.72 + 0.34 * Math.sin(Math.PI * slot);
-      const vigor = parentVigor * envelope * this.rng.random(1.16, 0.84);
-      this.branchQueue.push(new Branch(origin, orientation, opt.length[level] * vigor,
-        radius * opt.radius[level], level, opt.sections[level], opt.segments[level], vigor, attachment));
+      const vigor = parentVigor * envelope * this.rng.random(1.16, 0.84) * (1 + variation * reach);
+      const child = new Branch(origin, orientation, opt.length[level] * vigor,
+        radius * Math.min(Math.max(0.94, opt.radius[level]), opt.radius[level] * (1 + variation * reach * 0.75)), level,
+        opt.sections[level], opt.segments[level], vigor, attachment);
+      child.sweep = variation * growth.random(0.98, 0.09) * (competitor ? 0.35 : 1);
+      this.branchQueue.push(child);
     }
   }
 
@@ -838,9 +889,10 @@ export class Tree extends THREE.Group {
           const radius = sampled[i].radius;
           const u = THREE.MathUtils.clamp(chip.angle * segments - j, 0.12, 0.88);
           const v = THREE.MathUtils.clamp((height - sampled[i].distance) / span, 0.08, 0.92);
-          const w = Math.min(0.045 * segments, 0.85 * Math.min(u, 1 - u));
-          const h = Math.min(1.15 * radius / span, 0.90 * Math.min(v, 1 - v));
-          cutBarkChip(buffers, [v1, v3, v4, v2], u, v, w, h, Math.min(0.11 * radius, 0.24 * h * span), chip.lean);
+          const wide = chip.kind === 'scrape';
+          const w = Math.min((wide ? 0.11 : chip.kind === 'split' ? 0.026 : 0.055) * segments, 0.85 * Math.min(u, 1 - u));
+          const h = Math.min((wide ? 0.68 : 1.35) * radius / span, 0.90 * Math.min(v, 1 - v));
+          cutBarkChip(buffers, [v1, v3, v4, v2], u, v, w, h, Math.min((wide ? 0.045 : 0.12) * radius, 0.24 * h * span), chip);
         } else {
           buffers.indices.push(v1, v3, v2, v2, v3, v4);
         }

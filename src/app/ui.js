@@ -814,6 +814,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   branchSection.add(levelsSlider);
   controls.push({ control: levelsSlider, update: () => levelsSlider.setValue(tree.options.branch.levels) });
 
+  const structure = createSlider('Structure Variation', tree.options.branch.structureVariation, 0, 1, 0.01, value => {
+    tree.options.branch.structureVariation = value;
+    onChange();
+  });
+  branchSection.add(structure);
+  controls.push({ control: structure, update: () => structure.setValue(tree.options.branch.structureVariation) });
+
   // Angle subsection
   const angleSubsection = createSubSection('Angle');
   for (let i = 1; i <= 3; i++) {

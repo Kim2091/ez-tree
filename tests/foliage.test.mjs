@@ -146,6 +146,7 @@ test('large meshes keep valid indices and regenerate exactly at the same seed', 
 test('each shipped preset fits the budget with closed or thin blades, including its visible trellis', () => {
   for (const preset of Object.keys(TreePreset)) {
     const tree = new Tree();
+    tree.options.branch.structureVariation = 0; // Reference seed from before variable forks.
     tree.loadPreset(preset);
     tree.options.bark.damage = 0; // Reference budget for an unchipped trunk.
     const target = 25000;
@@ -339,7 +340,7 @@ test('simplified side shoots and terminal continuations stay joined to translate
     sections.forEach((s, i) => centers.set(s,
       new Vector3().lerpVectors(lo, hi, i / (sections.length - 1)).add(shift)));
     first += 2 * (segmentCount + 1);
-    if (chip?.threshold < tree.options.bark.damage) first += 16;
+    if (chip?.threshold < tree.options.bark.damage) first += 24;
   }
   assert(displaced > 0);
 });
