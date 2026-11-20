@@ -79,6 +79,8 @@ The triangle budget fitter accounts for branch rings, bark wounds, leaves, and a
 | USD + Textures (Current Level ZIP) | The selected USD mesh with its bark and foliage images, including the leaf subsurface weight PNG |
 | USD LODs + Textures (ZIP) | Three USD stages referencing one shared set of bark and foliage images. Extract either textured ZIP with its directory structure intact. |
 
+**Export Instanced GLB (Current Level)** stores shared leaf meshes and per-leaf transforms using `EXT_mesh_gpu_instancing`. It retains mesh damage variants and writes tint as the extension's custom `_COLOR_0` instance attribute. Importers must support the extension and that custom color attribute; use the regular baked GLB for broader compatibility. Instance export is static and does not export the editor's wind animation.
+
 GLB embeds the scattering weight using `KHR_materials_diffuse_transmission`. Importers that support the extension apply it automatically. The textured USD ZIPs include a thin-walled MaterialX Standard Surface with its subsurface input connected, plus a universal USD Preview Surface for other viewers. To wire the mask in another engine, import `*_Subsurface.png` as linear data and multiply its red channel by the desired scattering strength. The plain USD export is texture-free.
 
 The models use the tree's rest pose. Wind is animated in the browser preview.

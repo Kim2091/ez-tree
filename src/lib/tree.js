@@ -421,6 +421,45 @@ export class Tree extends THREE.Group {
   }
 
   /**
+   * Build static, instanced leaf meshes for a glTF export. The returned group
+   * uses the same leaf selection, damage and attachment offsets as the baked
+   * geometry. The caller owns and must dispose each child geometry.
+   * @param {LODDetail} detail
+   * @param {THREE.Material} material
+   * @returns {THREE.Group}
+   */
+  createInstancedFoliage(detail = {}, material = this.leavesMesh.material) {
+    if (!this.skeleton) this.#generateSkeleton();
+    const buffers = this.#meshSkeleton(detail, true).leaves;
+    const group = new THREE.Group();
+    group.name = 'Instanced Leaves';
+    const matrix = new THREE.Matrix4(), position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion(), scale = new THREE.Vector3(), color = new THREE.Color();
+    for (const { template, transforms, colors } of buffers.instances.values()) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(template.positions, 3));
+      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(template.normals, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(template.uvs, 2));
+      if (template.faceUVs) geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(template.faceUVs, 2));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(template.colors, 3));
+      geometry.setIndex(template.indices);
+      geometry.computeBoundingSphere();
+      const mesh = new THREE.InstancedMesh(geometry, material, colors.length / 3);
+      mesh.name = 'Leaf instances';
+      for (let i = 0; i < mesh.count; i++) {
+        const at = i * 8;
+        position.fromArray(transforms, at);
+        quaternion.fromArray(transforms, at + 3);
+        scale.setScalar(transforms[at + 7]);
+        mesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
+        mesh.setColorAt(i, color.setRGB(colors[i * 3], colors[i * 3 + 1], colors[i * 3 + 2]));
+      }
+      group.add(mesh);
+    }
+    return group;
+  }
+
+  /**
    * Tears down any LOD state and restores the flat branches/leaves meshes
    * as direct children, so generate() behaves as if LODs never existed.
    */
@@ -489,7 +528,7 @@ export class Tree extends THREE.Group {
    * Consumes no RNG, so it can run repeatedly with different detail specs.
    * @param {LODDetail} detail
    */
-  #meshSkeleton(detail = {}) {
+  #meshSkeleton(detail = {}, collectInstances = false) {
     const sectionStride = Math.max(1, Math.floor(detail.sectionStride ?? 1));
     const segmentFactor = detail.segmentFactor ?? 1;
     const leafStride = Math.max(1, detail.leafStride ?? 1);
@@ -519,7 +558,7 @@ export class Tree extends THREE.Group {
     const maps = this.options.leaves.maps;
     const faceUVs = this.options.leaves.textured && (maps?.roughness?.channel === 1 || maps?.normal?.channel === 1);
     const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves, leafStride, leafScale,
-      detail.leafDetail, offsets, faceUVs, this.options.seed);
+      detail.leafDetail, offsets, faceUVs, this.options.seed, collectInstances);
     return { branches, leaves };
   }
 

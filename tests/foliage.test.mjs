@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DoubleSide, FrontSide, Line3, Quaternion, ShaderLib, Texture, Vector2, Vector3 } from 'three';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { Color, DoubleSide, FrontSide, Line3, Matrix4, Quaternion, ShaderLib, Texture, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
 
 test('increasing damage keeps earlier wounds and their leaf identities across LODs', () => {
@@ -400,5 +402,80 @@ test('reference tree presets use metre-scale foliage and a mature willow envelop
       const ys = tree.skeleton.branches.flatMap(b => b.sections.map(s => s.origin.y));
       assert(Math.max(...ys) - Math.min(...ys) < 22);
     }
+  }
+});
+
+test('instanced leaves preserve baked positions, damage variants and colors', () => {
+  for (const name of ['Ginkgo', 'Weeping Willow', 'Sugar Maple', 'Ash Small']) {
+    const tree = new Tree(); tree.loadPreset(name);
+    tree.options.branch.levels = 0; tree.options.leaves.count = 24; tree.options.leaves.damage = 0.55;
+    tree.options.leaves.textured = true;
+    tree.options.leaves.maps.normal = new Texture();
+    tree.options.leaves.maps.normal.channel = 1;
+    tree.generate();
+    for (const detail of [{ leafDetail: 'full' }, { leafDetail: 'thin', leafStride: 1.5, sectionStride: 3, fineTwigs: false }]) {
+      const geometry = tree.createGeometry(detail).leaves;
+      const group = tree.createInstancedFoliage(detail);
+      const count = geometry.userData.leafSites, perLeaf = geometry.attributes.position.count / count;
+      const expected = Array.from({ length: count }, (_, i) => ({
+        position: new Vector3().fromBufferAttribute(geometry.attributes.position, i * perLeaf),
+        color: new Color().fromBufferAttribute(geometry.attributes.color, i * perLeaf),
+      }));
+      const matrix = new Matrix4(), tint = new Color(), used = new Set();
+      for (const mesh of group.children) {
+        assert(mesh.isInstancedMesh);
+        assert(mesh.geometry.attributes.uv1);
+        for (let i = 0; i < mesh.count; i++) {
+          mesh.getMatrixAt(i, matrix); mesh.getColorAt(i, tint);
+          const position = new Vector3().fromBufferAttribute(mesh.geometry.attributes.position, 0).applyMatrix4(matrix);
+          const color = new Color().fromBufferAttribute(mesh.geometry.attributes.color, 0).multiply(tint);
+          const match = expected.findIndex((entry, j) => !used.has(j) && entry.position.distanceTo(position) < 1e-5
+            && Math.abs(entry.color.r - color.r) < 1e-5 && Math.abs(entry.color.g - color.g) < 1e-5
+            && Math.abs(entry.color.b - color.b) < 1e-5);
+          assert(match >= 0, name);
+          used.add(match);
+        }
+        mesh.geometry.dispose();
+      }
+      assert.equal(used.size, count);
+      geometry.dispose();
+    }
+  }
+});
+
+test('instanced GLB writes the glTF GPU instancing extension and per-instance colors', async () => {
+  const tree = new Tree(); tree.options.branch.levels = 0; tree.options.leaves.count = 16; tree.generate();
+  const group = tree.createInstancedFoliage();
+  const previous = globalThis.FileReader;
+  globalThis.FileReader = class {
+    readAsArrayBuffer(blob) { blob.arrayBuffer().then(result => { this.result = result; this.onloadend(); }); }
+  };
+  try {
+    const data = await new GLTFExporter().parseAsync(group, { binary: true });
+    const view = new DataView(data);
+    assert.equal(view.getUint32(0, true), 0x46546c67);
+    const length = view.getUint32(12, true);
+    const json = JSON.parse(new TextDecoder().decode(new Uint8Array(data, 20, length)).trim());
+    assert(json.extensionsRequired.includes('EXT_mesh_gpu_instancing'));
+    const nodes = json.nodes.filter(node => node.extensions?.EXT_mesh_gpu_instancing);
+    assert(nodes.length > 0);
+    const total = nodes.reduce((sum, node) => {
+      const attrs = node.extensions.EXT_mesh_gpu_instancing.attributes;
+      assert('_COLOR_0' in attrs && 'ROTATION' in attrs && 'SCALE' in attrs);
+      return sum + json.accessors[attrs.TRANSLATION].count;
+    }, 0);
+    assert.equal(total, tree.skeleton.leaves.length);
+    const loaded = await new GLTFLoader().parseAsync(data, '');
+    let loadedCount = 0;
+    loaded.scene.traverse(object => {
+      if (object.isInstancedMesh) {
+        assert(object.instanceColor);
+        loadedCount += object.count;
+      }
+    });
+    assert.equal(loadedCount, total);
+  } finally {
+    globalThis.FileReader = previous;
+    group.traverse(object => object.geometry?.dispose());
   }
 });

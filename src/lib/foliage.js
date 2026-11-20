@@ -272,7 +272,7 @@ function withFaceUVs(source) {
 // Bake the local template into a single indexed mesh for rendering and GLB.
 // Allocate once at the final size, since dense presets can have thousands of
 // placements. Use the original skeleton index at every LOD for stable color.
-export function meshFoliage(placements, options, stride, scale, detail, offsets, useFaceUVs, seed) {
+export function meshFoliage(placements, options, stride, scale, detail, offsets, useFaceUVs, seed, collectInstances = false) {
   const { type, shootColorVariation, damage } = options;
   const originals = getTemplate(type, detail);
   const variants = useFaceUVs ? originals.map(withFaceUVs) : originals;
@@ -280,7 +280,7 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
   const topology = variants[0];
   const count = scale > 0 ? Math.ceil(placements.length / stride) : 0;
   const perLeaf = topology.positions.length / 3;
-  const vertices = count * perLeaf;
+  const vertices = collectInstances ? 0 : count * perLeaf;
   const verts = new Float32Array(vertices * 3);
   const normals = new Float32Array(vertices * 3);
   const colors = new Float32Array(vertices * 3);
@@ -288,11 +288,12 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
   const faceUVs = useFaceUVs ? new Float32Array(vertices * 2) : null;
   const flex = new Float32Array(vertices);
   const IndexArray = vertices > 65535 ? Uint32Array : Uint16Array;
-  const indices = new IndexArray(count * topology.indices.length);
+  const indices = new IndexArray(collectInstances ? 0 : count * topology.indices.length);
   const orientation = new THREE.Quaternion();
   const point = new THREE.Vector3();
 
   const origin = new THREE.Vector3();
+  const instances = collectInstances ? new Map() : null;
   const selected = count > 0 && count < placements.length
     ? selectLeafSites(placements, count, scale, (type === LeafType.Ash || type === LeafType.Maple), offsets, type === LeafType.Ginkgo) : null;
   for (let k = 0; k < count; k++) {
@@ -324,6 +325,13 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
     const red = brightness * (0.92 + 0.22 * tone) * (1 + 0.58 * pigment);
     const green = brightness * (1 + 0.30 * pigment);
     const blue = brightness * (1 - 0.12 * pigment);
+    if (instances) {
+      if (!instances.has(template)) instances.set(template, { template, transforms: [], colors: [] });
+      const group = instances.get(template);
+      group.transforms.push(origin.x, origin.y, origin.z, orientation.x, orientation.y, orientation.z, orientation.w, size);
+      group.colors.push(red, green, blue);
+      continue;
+    }
     for (let j = 0; j < perLeaf; j++) {
       const src = 3 * j;
       const dst = 3 * (start + j);
@@ -342,5 +350,5 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
       indices[firstIndex + j] = start + template.indices[j];
     }
   }
-  return { verts, normals, uvs, faceUVs, colors, indices, flex, leafSites: count, doubleSided: detail === 'thin' };
+  return { verts, normals, uvs, faceUVs, colors, indices, flex, leafSites: count, doubleSided: detail === 'thin', instances };
 }

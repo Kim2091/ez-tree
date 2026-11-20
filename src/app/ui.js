@@ -1328,6 +1328,21 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     const data = await exporter.parseAsync(model, { binary: true });
     download(new Blob([data]), `tree_LOD${level}.glb`);
   });
+  addExport('Export Instanced GLB (Current Level)', async (model, level, setStatus, { levels }) => {
+    setStatus('Building leaf instances...');
+    const instanced = tree.createInstancedFoliage(levels[level], model.children[1].material);
+    const output = new THREE.Group();
+    output.name = 'Tree';
+    output.add(model.children[0].clone(), instanced);
+    if (model.children[2]) output.add(model.children[2].clone(true));
+    try {
+      await paint();
+      const data = await exporter.parseAsync(output, { binary: true });
+      download(new Blob([data]), `tree_LOD${level}_instanced.glb`);
+    } finally {
+      instanced.traverse(object => object.geometry?.dispose());
+    }
+  });
   addExport('Export USD (Current Level)', async (model, level, setStatus) => {
     setStatus('Exporting USD...');
     await paint();
