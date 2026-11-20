@@ -58,7 +58,30 @@ def leaf(species, seed, veins):
             coords = list(zip(xs * SIZE, (1 - ys) * SIZE))
             draw.line(coords, fill=intensity, width=width)
 
-        for side in (-1, 1):
+        if species in ("ginkgo", "maple"):
+            # Palmate veins radiate from the blade base. Ginkgo veins fork
+            # repeatedly without an enclosing midrib; maple has five main rays.
+            rays = 17 if species == "ginkgo" else 5
+            for angle in np.linspace(-0.74, 0.74, rays):
+                t = np.linspace(0, 1, 90)
+                xs = 0.5 + angle * 0.64 * t
+                ys = 0.14 + 0.82 * t
+                stroke(xs, ys, 180, 3)
+                if species == "ginkgo":
+                    for fork in (0.32, 0.57):
+                        k = int(fork * (len(t) - 1))
+                        ft = np.linspace(0, 1, 40)
+                        for side in (-1, 1):
+                            stroke(xs[k] + (xs[-1] - xs[k] + side * 0.035) * ft,
+                                   ys[k] + (ys[-1] - ys[k]) * ft, 135, 2)
+                else:
+                    for fork in (0.38, 0.58, 0.74):
+                        k = int(fork * (len(t) - 1))
+                        ft = np.linspace(0, 1, 30)
+                        stroke(xs[k] + np.sign(angle or 1) * 0.09 * ft,
+                               ys[k] + 0.12 * ft, 110, 2)
+        else:
+          for side in (-1, 1):
             for level in range(veins):
                 y0 = 0.045 + 0.83 * (level + rng.uniform(-0.12, 0.12)) / veins
                 reach = 0.53 * np.sin(np.pi * y0) ** 0.48
@@ -75,7 +98,7 @@ def leaf(species, seed, veins):
                 stroke(xs[:29], ys[:29], 212, 4)
 
         secondary = np.asarray(field.filter(ImageFilter.GaussianBlur(0.85))) / 255
-        midrib = np.exp(-(x / (0.0017 + 0.0065 * (1 - v) ** 1.4)) ** 2)
+        midrib = np.zeros_like(x) if species == "ginkgo" else np.exp(-(x / (0.0017 + 0.0065 * (1 - v) ** 1.4)) ** 2)
         # Fine irregular areoles occupy the tissue between the larger veins.
         domain = np.stack([(u + 0.015 * broad) * 57, (v - 0.80 * x + 0.009 * broad) * 88], axis=-1)
         seeds = rng.uniform([-3, -45], [61, 92], size=(5900, 2))
@@ -84,7 +107,7 @@ def leaf(species, seed, veins):
         relief = 2.9 * midrib + 1.65 * secondary + 0.28 * network
         # Relative diffuse transmission. Use the exact vascular fields that
         # form the normal map so thick veins stay dark when backlit.
-        tissue = {"oak": 0.64, "aspen": 0.83, "ash": 0.74}[species]
+        tissue = {"oak": 0.64, "aspen": 0.83, "ash": 0.74, "ginkgo": 0.72, "willow": 0.76, "maple": 0.72}[species]
         scatter = tissue + 0.12 * broad + 0.045 * fine + 0.06 * v
         scatter -= 0.52 * midrib + 0.28 * secondary + 0.07 * network
         pigment = (212 + 34 * broad + 12 * fine + 9 * network + 21 * secondary)[..., None]
@@ -141,6 +164,6 @@ def aspen_bark():
 
 
 if __name__ == "__main__":
-    for args in [("oak", 211, 8), ("aspen", 173, 6), ("ash", 139, 10), ("pine", 89, 0)]:
+    for args in [("oak", 211, 8), ("aspen", 173, 6), ("ash", 139, 10), ("pine", 89, 0), ("ginkgo", 257, 0), ("willow", 263, 12), ("maple", 271, 0)]:
         leaf(*args)
     aspen_bark()

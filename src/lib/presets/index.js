@@ -1,3 +1,6 @@
+import ginkgo from './ginkgo.json';
+import willow from './weeping_willow.json';
+import maple from './sugar_maple.json';
 import ashSmall from './ash_small.json';
 import ashMedium from './ash_medium.json';
 import ashLarge from './ash_large.json';
@@ -17,6 +20,9 @@ import trellis from './trellis.json';
 import TreeOptions from '../options';
 
 export const TreePreset = {
+  'Ginkgo': ginkgo,
+  'Weeping Willow': willow,
+  'Sugar Maple': maple,
   'Ash Small': ashSmall,
   'Ash Medium': ashMedium,
   'Ash Large': ashLarge,

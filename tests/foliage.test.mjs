@@ -362,3 +362,31 @@ test('compound leaflets have individual surface UVs while the whole leaf shares 
   assert.equal(leafletRoots, 5);
   assert.equal(leafFlex.getX(0), 0);
 });
+
+test('new species use opaque mesh leaves and maple retains opposite pairs when fitted', () => {
+  for (const name of ['Ginkgo', 'Weeping Willow', 'Sugar Maple']) {
+    const tree = new Tree();
+    tree.loadPreset(name);
+    tree.generateLODs();
+    for (const { object } of tree.lod.levels) {
+      const leaf = object.children[1];
+      assert(leaf.geometry.index.count > 0, name);
+      assert.equal(leaf.material.transparent, false);
+      assert.equal(leaf.material.alphaTest, 0);
+    }
+    if (name === 'Sugar Maple') {
+      const sites = tree.skeleton.leaves;
+      const paired = sites.filter((site, i) => i > 0 && site.origin.equals(sites[i - 1].origin));
+      assert(paired.length > sites.length * 0.35);
+      const detail = tree.fitTriangleBudget(25000, { thinLeaves: true });
+      const positions = tree.createGeometry(detail).leaves.attributes.position;
+      const count = tree.createGeometry(detail).leaves.userData.leafSites;
+      const roots = new Map();
+      for (let i = 0; i < positions.count; i += positions.count / count) {
+        const key = [positions.getX(i), positions.getY(i), positions.getZ(i)].join('/');
+        roots.set(key, (roots.get(key) ?? 0) + 1);
+      }
+      assert([...roots.values()].some(n => n >= 2));
+    }
+  }
+});

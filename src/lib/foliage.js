@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { makeGinkgoTemplate } from './ginkgo';
+import { makeSugarMapleTemplate } from './presets/sugar_maple_leaf';
 import { LeafType } from './enums';
 import { selectLeafSites } from './canopy';
 import { applyAttachmentOffset } from './branch';
@@ -22,11 +24,13 @@ const aspen = [
 const leaflet = [[0.08, 0.017], [0.21, 0.098], [0.35, 0.142], [0.48, 0.153],
   [0.62, 0.136], [0.76, 0.091], [0.89, 0.034]];
 const stalk = [[0.05, 0.014], [0.60, 0.010], [0.93, 0.006]];
+const willow = [[0.08, 0.009], [0.18, 0.045], [0.32, 0.075], [0.48, 0.085], [0.64, 0.072], [0.79, 0.048], [0.91, 0.022]];
 const needle = [[0.08, 0.020], [0.52, 0.017], [0.83, 0.010]];
 
 // Outline samples for the two-sided mesh. Keep two oak lobes, the aspen
 // shoulder, opposite ash leaflets and the full five-needle fascicle.
 const thinStations = new Map([
+  [willow, [willow[2], willow[5]]],
   [oak, [oak[9], oak[11], oak[19]]],
   [aspen, [aspen[3], aspen[7]]],
   [leaflet, [leaflet[3]]],
@@ -35,10 +39,12 @@ const thinStations = new Map([
 ]);
 
 function makeTemplate(type, detail, variant, damagePattern) {
+  if (type === LeafType.Ginkgo) return makeGinkgoTemplate(detail, variant, damagePattern);
+  if (type === LeafType.Maple) return makeSugarMapleTemplate(detail, variant, damagePattern);
   const positions = [], colors = [], indices = [], uvs = [];
   const lowerFaces = [];
   const color = new THREE.Color({
-    oak: 0x66864a, aspen: 0x83a357, ash: 0x749553, pine: 0x4c7861,
+    willow: 0x719b59, maple: 0x638b48, oak: 0x66864a, aspen: 0x83a357, ash: 0x749553, pine: 0x4c7861,
   }[type]);
   const point = new THREE.Vector3();
   let bladeIndex = 0;
@@ -213,7 +219,7 @@ function makeTemplate(type, detail, variant, damagePattern) {
       blade(needle, 0.86 + i * 0.035, 0, 0.20 + i * 0.09, i * 2.40, 0.72);
     }
   } else {
-    blade(type === LeafType.Aspen ? aspen : oak);
+    blade(type === LeafType.Aspen ? aspen : type === LeafType.Willow ? willow : oak);
   }
 
   const geometry = new THREE.BufferGeometry();
@@ -288,7 +294,7 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
 
   const origin = new THREE.Vector3();
   const selected = count > 0 && count < placements.length
-    ? selectLeafSites(placements, count, scale, type === LeafType.Ash, offsets) : null;
+    ? selectLeafSites(placements, count, scale, (type === LeafType.Ash || type === LeafType.Maple), offsets) : null;
   for (let k = 0; k < count; k++) {
     const i = selected ? selected[k] : k;
     const leaf = placements[i];

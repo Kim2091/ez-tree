@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import RNG from './rng';
 import { chipTrianglesAdded, cutBarkChip } from './bark-chip';
 import { Branch, applyAttachmentOffset, crownFork, growthIntervals, limbBends } from './branch';
-import { TreeType } from './enums';
+import { TreeType, LeafType } from './enums';
+import { bendWillowShoot } from './willow';
 import { meshFoliage, trianglesPerLeaf } from './foliage';
 import TreeOptions from './options';
 import { loadPreset } from './presets/index';
@@ -635,6 +636,8 @@ export class Tree extends THREE.Group {
         );
       }
 
+      if (this.options.leaves.type === LeafType.Willow) bendWillowShoot(qSection, branch.level, branch.sectionCount);
+
       // Apply trellis force if enabled
       if (this.options.trellis.enabled) {
         const trellisResult = this.calculateTrellisForce(sectionOrigin, sectionRadius);
@@ -825,7 +828,7 @@ export class Tree extends THREE.Group {
     const { type, angle, start } = this.options.leaves;
     const count = Math.round(this.options.leaves.count * (type === 'pine' ? Math.min(1, 0.32 + vigor) : 1));
     const phase = this.rng.random(turn);
-    const paired = type === 'ash';
+    const paired = type === 'ash' || type === 'maple';
     const nodes = paired ? Math.ceil(count / 2) : count;
     for (let n = 0; n < nodes; n++) {
       const t = start + (1 - start) * (n + this.rng.random(0.85, 0.15)) / nodes;

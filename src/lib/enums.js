@@ -6,6 +6,9 @@ export const Billboard = {
 
 export const LeafType = {
   Ash: 'ash',
+  Ginkgo: 'ginkgo',
+  Willow: 'willow',
+  Maple: 'maple',
   Aspen: 'aspen',
   Oak: 'oak',
   Pine: 'pine',
