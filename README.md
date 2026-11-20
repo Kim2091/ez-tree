@@ -37,6 +37,8 @@ Branch growth transitions are eased and intermediate rings round the curves. Chi
 
 ![Ash Medium with smooth curves and localized bends, shown as a whole crown and as the same isolated limb](docs/ash-limb-bends.jpg)
 
+Two optional bark color candidates, **Photo Smooth (unidentified)** and **Photo Furrowed (unidentified)**, were AI-derived from user photographs P1250194_DxO and P1250234_DxO. They are not assigned to a species, and supply only color, without matching normal or roughness maps. Select them under **Bark -> Type**.
+
 Each blade has root-to-tip UVs for 1024 × 1024 color, normal, roughness, and subsurface maps. The grayscale subsurface PNG stores a linear weight. Lighter tissue transmits more diffuse light, and the dark veins and midrib transmit less. Each species has its own map. In **Leaves**, enable **Surface Textures** and adjust **Subsurface Strength** from 0 to 1. The default is 0.65. The effect uses the existing mesh at every LOD.
 
 Closed oak, aspen, and ash blades have a waxier upper surface and a paler, rougher underside with more pronounced vein relief. Their normal and roughness images contain two 1024 × 1024 panels sampled through a second UV set. Color and subsurface weight use the original blade UVs. Thin blades share the upper panel across their two visible faces. Pine uses its needle-specific maps.

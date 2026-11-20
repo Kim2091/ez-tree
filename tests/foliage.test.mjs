@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { Color, DoubleSide, FrontSide, Line3, Matrix4, Quaternion, ShaderLib, Texture, Vector2, Vector3 } from 'three';
+import { Color, DoubleSide, FrontSide, Line3, Matrix4, Quaternion, ShaderLib, Texture, TextureLoader, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
+import { applyTreeTextures } from '../src/app/textures.js';
 
 test('increasing damage keeps earlier wounds and their leaf identities across LODs', () => {
   const tree = new Tree();
@@ -477,5 +478,30 @@ test('instanced GLB writes the glTF GPU instancing extension and per-instance co
   } finally {
     globalThis.FileReader = previous;
     group.traverse(object => object.geometry?.dispose());
+  }
+});
+
+test('photo-derived bark loads its PNG and clears unrelated maps', async () => {
+  const original = TextureLoader.prototype.load, requests = [];
+  TextureLoader.prototype.load = function (url, onLoad) {
+    requests.push(url);
+    const texture = new Texture();
+    queueMicrotask(() => onLoad(texture));
+    return texture;
+  };
+  try {
+    const tree = new Tree();
+    tree.options.bark.type = 'Bark001';
+    applyTreeTextures(tree);
+    assert(tree.options.bark.maps.normal);
+    tree.options.bark.type = 'PhotoSmooth';
+    applyTreeTextures(tree);
+    assert(requests.includes('/textures/bark/PhotoSmooth_1K-JPG/PhotoSmooth_1K-JPG_Color.png'));
+    assert.equal(tree.options.bark.maps.color.userData.mimeType, 'image/png');
+    assert.equal(tree.options.bark.maps.normal, null);
+    assert.equal(tree.options.bark.maps.roughness, null);
+    await Promise.resolve();
+  } finally {
+    TextureLoader.prototype.load = original;
   }
 });

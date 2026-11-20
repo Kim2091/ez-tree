@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { LeafType, TreePreset } from '@dgreenheck/ez-tree';
 
-// Bark keys map 1:1 to ambientcg directories under /textures/bark/.
+// Bark values map to directories under /textures/bark/.
 // Add or remove entries to expose more variants in the UI dropdown.
 export const BarkType = {
   Aspen: 'Aspen',
+  'Photo Smooth (unidentified)': 'PhotoSmooth',
+  'Photo Furrowed (unidentified)': 'PhotoFurrowed',
   Bark001: 'Bark001',
   Bark002: 'Bark002',
   Bark003: 'Bark003',
@@ -24,8 +26,12 @@ const ready = new WeakMap();
 
 function surfaceMaps(base, species) {
   if (sets.has(base)) return sets.get(base);
-  const maps = {};
-  const channels = [['color', 'Color.jpg'], ['normal', 'NormalGL.jpg'], ['roughness', 'Roughness.jpg']];
+  const photoBark = /\/Photo(?:Smooth|Furrowed)_1K-JPG\//.test(base);
+  // These photo-derived candidates provide albedo only. Explicit nulls clear
+  // the previous bark's unrelated normal and roughness maps on selection.
+  const maps = { normal: null, roughness: null };
+  const channels = photoBark ? [['color', 'Color.png']]
+    : [['color', 'Color.jpg'], ['normal', 'NormalGL.jpg'], ['roughness', 'Roughness.jpg']];
   if (species) channels.push(['subsurface', 'Subsurface.png']);
   for (const [channel, file] of channels) {
     const sided = species && species !== LeafType.Pine && (channel === 'normal' || channel === 'roughness');
@@ -40,7 +46,7 @@ function surfaceMaps(base, species) {
     });
     if (channel === 'color') texture.colorSpace = THREE.SRGBColorSpace;
     if (sided) texture.channel = 1;
-    if (channel === 'color' || channel === 'roughness') texture.userData.mimeType = 'image/jpeg';
+    if (channel === 'color' || channel === 'roughness') texture.userData.mimeType = file.endsWith('.png') ? 'image/png' : 'image/jpeg';
     texture.anisotropy = 4;
     maps[channel] = texture;
     ready.set(texture, loaded);
@@ -67,7 +73,7 @@ export async function prepareExportMaterial(material) {
 
 export function applyTreeTextures(tree) {
   const bark = tree.options.bark, leaf = tree.options.leaves;
-  const barkType = Object.hasOwn(BarkType, bark.type) ? bark.type : BarkType.Bark001;
+  const barkType = Object.values(BarkType).includes(bark.type) ? bark.type : BarkType.Bark001;
   const dir = barkType + '_1K-JPG';
   Object.assign(bark.maps, surfaceMaps('/textures/bark/' + dir + '/' + dir));
   const shape = Object.values(LeafType).includes(leaf.type) ? leaf.type : LeafType.Oak;
