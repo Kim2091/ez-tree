@@ -828,6 +828,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   branchSection.add(forkedCrown);
   controls.push({ control: forkedCrown, update: () => forkedCrown.setValue(tree.options.branch.forkedCrown) });
 
+  const stopAtGround = createToggle('Stop Branches at Ground', tree.options.branch.stopAtGround, value => {
+    tree.options.branch.stopAtGround = value;
+    onChange();
+  });
+  branchSection.add(stopAtGround);
+  controls.push({ control: stopAtGround, update: () => stopAtGround.setValue(tree.options.branch.stopAtGround) });
+
   const limbBends = createSlider('Limb Bends', tree.options.branch.limbBends, 0, 1, 0.01, value => {
     tree.options.branch.limbBends = value;
     onChange();

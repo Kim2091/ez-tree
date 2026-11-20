@@ -236,3 +236,18 @@ test('ginkgo primary limbs are distributed on both sides of the trunk fork', () 
   assert(positions.some(distance => distance < forkDistance - 0.1));
   assert(positions.some(distance => distance > forkDistance + 0.1));
 });
+
+test('ground clearance applies across species and can be disabled', () => {
+  const tree = new Tree();
+  for (const name of ['Ginkgo', 'Weeping Willow', 'Sugar Maple', 'Oak Medium', 'Pine Medium']) {
+    tree.options.branch.stopAtGround = true;
+    tree.loadPreset(name);
+    for (const branch of tree.skeleton.branches) {
+      for (const section of branch.sections) assert(section.origin.y >= -1e-8, name);
+    }
+  }
+  tree.loadPreset('Weeping Willow');
+  tree.options.branch.stopAtGround = false;
+  tree.generate({ leafScale: 0 });
+  assert(tree.skeleton.branches.some(branch => branch.sections.some(section => section.origin.y < 0)));
+});

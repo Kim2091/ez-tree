@@ -713,11 +713,11 @@ export class Tree extends THREE.Group {
       sectionOrientation.setFromQuaternion(qSection);
     }
 
-    // Hanging willow branchlets stop at the local ground plane instead of
-    // continuing underground. Keep the intersection as a real terminal ring,
-    // so subsequent leaf sites and child attachments remain on the wood.
+    // Branchlets stop at the local ground plane instead of continuing
+    // underground. This can be disabled for trees above a drop-off. Keep the
+    // intersection as a terminal ring so attachments remain on the wood.
     let grounded = false;
-    if (this.options.leaves.type === LeafType.Willow && branch.level > 0) {
+    if (this.options.branch.stopAtGround && branch.level > 0) {
       const ground = 0.03;
       const crossing = sections.findIndex((section, i) => i > 0 && section.origin.y < ground);
       if (crossing > 0) {
@@ -827,7 +827,7 @@ export class Tree extends THREE.Group {
       const attempts = oppositeOrWillow ? 1 : 3;
       for (let attempt = 0; attempt < attempts; attempt++) {
         const twig = splitTerminalShoot(sections, this.skeleton.leaves, firstLeaf, forkRng,
-          this.options.leaves.type === LeafType.Willow ? 0.03 : -Infinity);
+          this.options.branch.stopAtGround ? 0.03 : -Infinity);
         if (twig) tipShoots.push(twig);
       }
     }
