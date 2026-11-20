@@ -53,6 +53,21 @@ test('micro blades retain more oak leaf sites within the same budgets', () => {
   for (const model of [original, simple, dense]) { model.branches.dispose(); model.leaves.dispose(); }
 });
 
+test('leaf thinning keeps most terminal buds to avoid bare branch tips', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Medium');
+  tree.options.leaves.sprigs = true; tree.generate({ leafDetail: 'micro' });
+  const tips = tree.skeleton.leaves.filter(leaf => leaf.terminal);
+  const geometry = tree.createGeometry({ leafDetail: 'micro', sprigStep: 5, leafStride: 1.92 }).leaves;
+  const position = geometry.attributes.position;
+  const perLeaf = position.count / geometry.userData.leafSites;
+  const key = (x, y, z) => [x, y, z].map(value => Math.round(value * 1000)).join('/');
+  const roots = new Set();
+  for (let i = 0; i < position.count; i += perLeaf) roots.add(key(position.getX(i), position.getY(i), position.getZ(i)));
+  const retained = tips.filter(leaf => roots.has(key(leaf.origin.x, leaf.origin.y, leaf.origin.z))).length;
+  assert(retained / tips.length > 0.85, `${retained}/${tips.length} terminal leaves`);
+  geometry.dispose();
+});
+
 test('micro ginkgo and sugar maple retain their thin species outline', () => {
   for (const name of ['Ginkgo', 'Sugar Maple']) {
     const tree = new Tree(); tree.loadPreset(name);

@@ -880,7 +880,9 @@ export class Tree extends THREE.Group {
           axis.y = axis.y * 0.70 - 0.08;
           orientation = leafOrientation(axis, rng.random(0.46, -0.46));
         }
+        const previousCount = this.skeleton.leaves.length;
         this.#recordLeaf(lastSection.origin, orientation, 1, endAttachment);
+        if (this.skeleton.leaves.length > previousCount) this.skeleton.leaves.at(-1).terminal = true;
       }
     }
 

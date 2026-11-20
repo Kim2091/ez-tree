@@ -85,7 +85,9 @@ export function selectLeafSites(leaves, count, scale, paired, offsets, clustered
   const fraction = count / leaves.length;
   const priority = Float32Array.from(reference, n => n ? 1 + (n - 1) * fraction : 0);
   function score(i) {
-    let value = 0;
+    // Retain terminal buds more often so reduced crowns don't leave long,
+    // unsupported-looking bare branch ends protruding through the leaves.
+    let value = leaves[i].terminal ? 2 : 0;
     for (let j = i * samples; j < (i + 1) * samples; j++) {
       const cell = cells[j], target = priority[cell];
       value += target ? (target - kept[cell]) / (target + kept[cell]) + 0.35 / Math.sqrt(reference[cell]) : -1;
