@@ -1229,6 +1229,18 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   environmentSection.add(sunAzimuthSlider);
   controls.push({ control: sunAzimuthSlider, update: () => sunAzimuthSlider.setValue(environment.skybox.sunAzimuth) });
 
+  const sunIntensitySlider = createSlider('Sun Intensity', environment.skybox.sun.intensity, 0, 5, 0.05, (val) => {
+    environment.skybox.sun.intensity = val;
+  });
+  environmentSection.add(sunIntensitySlider);
+  controls.push({ control: sunIntensitySlider, update: () => sunIntensitySlider.setValue(environment.skybox.sun.intensity) });
+
+  const exposureSlider = createSlider('Preview Exposure', renderer.toneMappingExposure, 0.25, 2, 0.01, (val) => {
+    renderer.toneMappingExposure = val;
+  });
+  environmentSection.add(exposureSlider);
+  controls.push({ control: exposureSlider, update: () => exposureSlider.setValue(renderer.toneMappingExposure) });
+
   parametersTab.appendChild(environmentSection.element);
 
   // ----- Info Section -----
