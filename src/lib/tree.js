@@ -422,6 +422,15 @@ export class Tree extends THREE.Group {
     };
   }
 
+  /** Calculate a uniform scale for local bounds, keeping the origin fixed. */
+  sizeLimitFactor(bounds) {
+    if (!this.options.bounds?.enabled || !bounds || bounds.isEmpty()) return 1;
+    const size = bounds.getSize(new THREE.Vector3());
+    const max = this.options.bounds.max;
+    return Math.min(1, ...['x', 'y', 'z'].map(axis => size[axis] > 0
+      ? Math.max(0.001, max[axis]) / size[axis] : 1));
+  }
+
   /**
    * Build static, instanced leaf meshes for a glTF export. The returned group
    * uses the same leaf selection, damage and attachment offsets as the baked
@@ -956,6 +965,18 @@ export class Tree extends THREE.Group {
     const growth = new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length, 0x27d4eb2d));
     if (count > 1 && level > 1) count = Math.max(1, Math.round(count * (1 + variation * growth.random(0.26, -0.45))));
     const start = opt.start[level];
+    const clearHeight = level === 1 ? Math.max(0, opt.clearTrunkHeight ?? 0) : 0;
+    let clearStart = 0;
+    if (clearHeight && opt.lowerLimbMode !== 'cull') {
+      const floor = sections[0].origin.y + clearHeight;
+      const index = sections.findIndex(section => section.origin.y >= floor);
+      if (index < 0) return;
+      if (index > 0) {
+        const a = sections[index - 1], b = sections[index];
+        const fraction = (floor - a.origin.y) / Math.max(1e-9, b.origin.y - a.origin.y);
+        clearStart = THREE.MathUtils.lerp(a.distance, b.distance, fraction) / sections.at(-1).distance;
+      }
+    }
     const phase = this.rng.random(turn);
     const perWhorl = Math.min(count, 5);
     const whorls = Math.ceil(count / perWhorl);
@@ -1005,7 +1026,9 @@ export class Tree extends THREE.Group {
         // arise both above and below it along the parent trunk.
         t = THREE.MathUtils.clamp(fork.at + (t < fork.at ? -0.04 : 0.04), start, 1);
       }
+      if (clearHeight && opt.lowerLimbMode !== 'cull') t = clearStart + (1 - clearStart) * t;
       const { origin, frame, radius, attachment } = sampleBranch(sections, t);
+      if (clearHeight && opt.lowerLimbMode === 'cull' && origin.y < sections[0].origin.y + clearHeight) continue;
       const crownAngle = evergreen && level === 1 ? 1.08 - 0.63 * slot * slot : 1;
       // One broadleaf lateral can compete with the leader. Its siblings
       // spread at wider angles and have unequal access to the open crown.

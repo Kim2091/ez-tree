@@ -9,6 +9,7 @@ import { version } from '../../package.json';
 import { collectTextures, exportUSD } from './usd';
 import { leafDiffuseTransmission } from './leaf-gltf';
 import { frameTree } from './scene';
+import { LODManager } from './lod-management';
 
 const exporter = new GLTFExporter();
 exporter.register(leafDiffuseTransmission);
@@ -546,7 +547,12 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   // Inspect each editable LOD at any camera distance using the same skeleton.
   let previewLevel = 0;
   let details = defaultDetails();
-  let budget = 25000;
+  const lodManager = new LODManager(tree, details);
+  let lodScales = [1, 1, 1];
+  let lodStatus;
+  let boundsStatus;
+  let clearanceStatus;
+  let budgets = [25000, 12500, 6200];
   let fitTarget = null;
   let lastBuildMs = null;
 
@@ -616,10 +622,37 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   function setPreviewLevel(level) {
     previewLevel = level;
     fitTarget = null;
+    updateLODOrder();
+    for (const section of parametersTab.querySelectorAll('[data-tree-wide]')) {
+      section.inert = level !== 0;
+      section.style.opacity = level === 0 ? '' : '0.55';
+      section.title = level === 0 ? '' : 'Switch to LOD0 to edit shared tree settings.';
+    }
     lodButtons.forEach((b, i) => b.classList.toggle('active', i === level));
     applyLODPreview();
     refreshOptimization();
     updateInfoDisplays();
+  }
+
+  function updateLODOrder({ invalidate = false, auto = false } = {}) {
+    if (invalidate) lodManager.invalidate();
+    lodManager.details = details;
+    const adjusted = lodManager.reconcile({ auto });
+    const baseScale = tree.sizeLimitFactor(lodManager.boundsFor(details[0]));
+    lodScales = details.map(detail => Math.min(baseScale, tree.sizeLimitFactor(lodManager.boundsFor(detail))));
+    tree.scale.setScalar(lodScales[previewLevel]);
+    const bounds = lodManager.boundsFor(details[previewLevel]);
+    if (boundsStatus && !bounds.isEmpty()) {
+      const size = bounds.getSize(new THREE.Vector3()).multiplyScalar(lodScales[previewLevel]);
+      boundsStatus.textContent = `LOD${previewLevel} size: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m`;
+    }
+    if (clearanceStatus) clearanceStatus.textContent = tree.options.bounds.enabled
+      ? `Approximate clearance after size fit: ${(tree.options.branch.clearTrunkHeight * tree.scale.x).toFixed(2)} m`
+      : '';
+    if (lodStatus) {
+      const counts = details.map((detail, i) => `LOD${i}: ${lodManager.count(detail).toLocaleString()}`);
+      lodStatus.textContent = counts.join(' · ') + (adjusted.length ? ` (adjusted ${adjusted.map(i => `LOD${i}`).join(', ')})` : '');
+    }
   }
 
   /** Vertex/triangle counts of the geometry currently on screen */
@@ -648,6 +681,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     tree.generate(details[previewLevel]);
     lastBuildMs = performance.now() - t0;
     fitTarget = null;
+    updateLODOrder({ invalidate: true });
+    applyLODPreview();
+    refreshOptimization();
     tree.traverse((o) => {
       if (o.material) {
         o.material.needsUpdate = true;
@@ -659,6 +695,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // ----- Presets Section -----
   const presetsSection = createSection('Presets', 'swatch', true);
+  presetsSection.element.dataset.treeWide = '';
 
   const presetSelect = createSelect('Preset',
     Object.fromEntries(Object.keys(TreePreset).map(p => [p, p])),
@@ -666,6 +703,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     (val) => {
       loadPresetWithTextures(tree, val, false);
       tree.generate(details[previewLevel]);
+      updateLODOrder({ invalidate: true });
+      applyLODPreview();
       frameTree(tree, camera, orbitControls, environment.skybox.sun);
       fitTarget = null;
       refreshAllControls();
@@ -691,6 +730,10 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   parametersTab.appendChild(presetsSection.element);
 
   const optimization = createSection('Mesh Optimization', 'cube', false);
+  const lodHelp = document.createElement('div');
+  lodHelp.className = 'control-label';
+  lodHelp.textContent = 'Mesh settings apply only to the selected LOD. Tree shape and materials are edited in LOD0.';
+  optimization.add(lodHelp);
   const lodSelect = createSelect('Edit Level', { LOD0: '0', LOD1: '1', LOD2: '2' }, '0',
     value => setPreviewLevel(Number(value)));
   optimization.add(lodSelect);
@@ -698,7 +741,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   function editDetail(key, value) {
     details[previewLevel][key] = value;
     fitTarget = null;
+    updateLODOrder();
     applyLODPreview();
+    refreshOptimization();
     updateInfoDisplays();
   }
   const bladeOptions = { Full: 'full', Reduced: 'reduced', Coarse: 'coarse', 'Thin (denser canopy)': 'thin', 'Compact (more leaves)': 'compact', 'Micro (simplest blades)': 'micro' };
@@ -715,29 +760,47 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     optimization.add(control);
     tuning.push({ key, control, min, max, step });
   }
-  optimization.add(createSlider('Triangle Budget', budget, 100, 1000000, 100, value => { budget = value; }));
+  const budgetSlider = createSlider('Triangle Budget', budgets[0], 100, 1000000, 100, value => { budgets[previewLevel] = value; });
+  optimization.add(budgetSlider);
   optimization.add(createButton('Fit to Budget', 'cube', () => {
+    const budget = budgets[previewLevel];
     const leafDetail = details[previewLevel].leafDetail;
     details[previewLevel] = tree.fitTriangleBudget(budget, { thinLeaves: leafDetail === 'thin', compactLeaves: leafDetail === 'compact', microLeaves: leafDetail === 'micro' });
     fitTarget = budget;
+    updateLODOrder();
     applyLODPreview();
     refreshOptimization();
     updateInfoDisplays();
   }));
   const denseFit = createButton('Fit Dense Canopy', 'cube', () => {
+    const budget = budgets[previewLevel];
     // At tight budgets the cost of woody sprays can outweigh their coverage.
     // Maple and ginkgo retain their higher-cost distinctive leaf outlines.
     const threshold = [LeafType.Maple, LeafType.Ginkgo].includes(tree.options.leaves.type) ? 200000 : 100000;
-    tree.options.leaves.sprigs = tree.options.type === TreeType.Deciduous && budget >= threshold;
-    tree.generate({ ...details[previewLevel], leafDetail: 'micro' });
+    if (previewLevel === 0) {
+      tree.options.leaves.sprigs = tree.options.type === TreeType.Deciduous && budget >= threshold;
+      tree.generate({ ...details[previewLevel], leafDetail: 'micro' });
+      lodManager.invalidate();
+    }
     details[previewLevel] = tree.fitTriangleBudget(budget, { microLeaves: true });
     fitTarget = budget;
+    updateLODOrder();
     applyLODPreview();
     refreshOptimization();
     refreshAllControls();
   });
   denseFit.element.title = 'Fit more opaque leaves; at larger budgets add terminal sprigs. Micro blades simplify leaf outlines.';
   optimization.add(denseFit);
+  optimization.add(createButton('Auto Fit LOD1 and LOD2', 'cube', () => {
+    updateLODOrder({ auto: true });
+    applyLODPreview();
+    refreshOptimization();
+    updateInfoDisplays();
+  }));
+  lodStatus = document.createElement('div');
+  lodStatus.className = 'control-label';
+  lodStatus.setAttribute('role', 'status');
+  optimization.add(lodStatus);
   const fitStatus = document.createElement('div');
   fitStatus.className = 'control-label';
   fitStatus.setAttribute('role', 'status');
@@ -748,13 +811,44 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   }));
   function refreshOptimization() {
     lodSelect.setValue(String(previewLevel));
+    budgetSlider.setValue(budgets[previewLevel]);
     leafDetail.setValue(details[previewLevel].leafDetail);
     for (const { key, control } of tuning) control.setValue(details[previewLevel][key]);
   }
   parametersTab.appendChild(optimization.element);
 
+  const sizeSection = createSection('Size Limits', 'cube', false);
+  sizeSection.element.dataset.treeWide = '';
+  const boundsEnabled = createToggle('Fit Within Maximum Dimensions', tree.options.bounds.enabled, value => {
+    tree.options.bounds.enabled = value;
+    updateLODOrder();
+    frameTree(tree, camera, orbitControls, environment.skybox.sun);
+    updateInfoDisplays();
+  });
+  sizeSection.add(boundsEnabled);
+  controls.push({ control: boundsEnabled, update: () => boundsEnabled.setValue(tree.options.bounds.enabled) });
+  for (const [axis, label] of [['x', 'Max Width X (m)'], ['y', 'Max Height Y (m)'], ['z', 'Max Depth Z (m)']]) {
+    const control = createSlider(label, tree.options.bounds.max[axis], 0.1, 200, 0.1, value => {
+      tree.options.bounds.max[axis] = value;
+      updateLODOrder();
+      if (tree.options.bounds.enabled) frameTree(tree, camera, orbitControls, environment.skybox.sun);
+      updateInfoDisplays();
+    });
+    sizeSection.add(control);
+    controls.push({ control, update: () => control.setValue(tree.options.bounds.max[axis]) });
+  }
+  boundsStatus = document.createElement('div');
+  boundsStatus.className = 'control-label';
+  sizeSection.add(boundsStatus);
+  const sizeHelp = document.createElement('div');
+  sizeHelp.className = 'control-label';
+  sizeHelp.textContent = 'Uniformly scales around the tree origin. Lower LODs can shrink slightly if their leaves extend farther.';
+  sizeSection.add(sizeHelp);
+  parametersTab.appendChild(sizeSection.element);
+
   // ----- Bark Section -----
   const barkSection = createSection('Bark', 'cube', false);
+  barkSection.element.dataset.treeWide = '';
   const barkDamage = createSlider('Bark Chipping', tree.options.bark.damage, 0, 1, 0.01, value => {
     tree.options.bark.damage = value;
     if (fitTarget !== null) {
@@ -762,7 +856,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
       details[previewLevel] = tree.fitTriangleBudget(fitTarget, { thinLeaves: leafDetail === 'thin', compactLeaves: leafDetail === 'compact', microLeaves: leafDetail === 'micro' });
       refreshOptimization();
     }
+    updateLODOrder({ invalidate: true });
     applyLODPreview();
+    refreshOptimization();
     updateInfoDisplays();
   });
   barkSection.add(barkDamage);
@@ -814,6 +910,23 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // ----- Branches Section -----
   const branchSection = createSection('Branches', 'share', false);
+  branchSection.element.dataset.treeWide = '';
+
+  const clearTrunk = createSlider('Clear Trunk Height (unscaled m)', tree.options.branch.clearTrunkHeight, 0, 30, 0.1, value => {
+    tree.options.branch.clearTrunkHeight = value;
+    onChange();
+  });
+  branchSection.add(clearTrunk);
+  controls.push({ control: clearTrunk, update: () => clearTrunk.setValue(tree.options.branch.clearTrunkHeight) });
+  clearanceStatus = document.createElement('div');
+  clearanceStatus.className = 'control-label';
+  branchSection.add(clearanceStatus);
+  const lowerLimbMode = createSelect('Lower Main Branches', { 'Raise above clearance': 'raise', 'Remove below clearance': 'cull' }, tree.options.branch.lowerLimbMode, value => {
+    tree.options.branch.lowerLimbMode = value;
+    onChange();
+  });
+  branchSection.add(lowerLimbMode);
+  controls.push({ control: lowerLimbMode, update: () => lowerLimbMode.setValue(tree.options.branch.lowerLimbMode) });
 
   const treeTypeSelect = createSelect('Tree Type', TreeType, tree.options.type, (val) => {
     tree.options.type = val;
@@ -1013,6 +1126,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // ----- Leaves Section -----
   const leavesSection = createSection('Leaves', 'sparkles', false);
+  leavesSection.element.dataset.treeWide = '';
 
   const leafTypeSelect = createSelect('Leaf Shape', LeafType, tree.options.leaves.type, (val) => {
     tree.options.leaves.type = val;
@@ -1121,6 +1235,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   // ----- Trellis Section -----
   const trellisSection = createSection('Trellis', 'share', false);
+  trellisSection.element.dataset.treeWide = '';
 
   const trellisEnabledToggle = createToggle('Enabled', tree.options.trellis.enabled, (val) => {
     tree.options.trellis.enabled = val;
@@ -1311,7 +1426,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
 
   const savePresetBtn = createButton('Save Preset', 'document', () => {
     const link = document.getElementById('downloadLink');
-    const json = JSON.stringify({ ...tree.options, lodDetails: details }, (key, value) => key === 'maps' ? undefined : value, 2);
+    const json = JSON.stringify({ ...tree.options, lodDetails: details, lodBudgets: budgets }, (key, value) => key === 'maps' ? undefined : value, 2);
     const blob = new Blob([json], { type: 'application/json' });
     link.href = URL.createObjectURL(blob);
     link.download = 'tree.json';
@@ -1335,6 +1450,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   function snapshotModel() {
     const group = new THREE.Group();
     group.name = 'Tree';
+    group.scale.copy(tree.scale);
     for (const mesh of [tree.branchesMesh, tree.leavesMesh]) {
       const snapshot = new THREE.Mesh(mesh.geometry, mesh.material.clone());
       if (mesh.material.leafScattering) snapshot.material.leafScattering = { ...mesh.material.leafScattering };
@@ -1354,9 +1470,10 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
       const source = allLevels ? new Tree() : null;
       source?.options.copy(tree.options);
       const levels = structuredClone(details);
+      const scales = [...lodScales];
       try {
         await Promise.all(model.children.slice(0, 2).map(mesh => prepareExportMaterial(mesh.material)));
-        await action(model, level, setStatus, { source, levels });
+        await action(model, level, setStatus, { source, levels, scales });
       } catch (error) {
         exportStatus.textContent = 'Export failed. ' + error.message;
         console.error(error);
@@ -1378,6 +1495,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     const instanced = tree.createInstancedFoliage(levels[level], model.children[1].material);
     const output = new THREE.Group();
     output.name = 'Tree';
+    output.scale.copy(model.scale);
     output.add(model.children[0].clone(), instanced);
     if (model.children[2]) output.add(model.children[2].clone(true));
     try {
@@ -1394,13 +1512,14 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     download(exportUSD(model), `tree_LOD${level}.usd`);
   });
 
-  async function exportLevels(model, format, setStatus, { source, levels }) {
+  async function exportLevels(model, format, setStatus, { source, levels, scales }) {
     const files = {};
     const textures = format === 'usd' ? await collectTextures(model, files) : {};
     for (const [i, detail] of levels.entries()) {
       setStatus(`Exporting LOD ${i + 1}/${levels.length}...`);
       await paint();
       const { branches, leaves } = source.createGeometry(detail);
+      model.scale.setScalar(scales[i]);
       model.children[0].geometry = branches;
       setLeafGeometry(model.children[1], leaves);
       try {
@@ -1509,6 +1628,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
           delete preset.leaves?.maps;
           // Older presets have no mesh settings and open at the original resolution.
           details = defaultDetails();
+          budgets = [25000, 12500, 6200].map((fallback, i) => Number.isFinite(preset.lodBudgets?.[i])
+            ? THREE.MathUtils.clamp(preset.lodBudgets[i], 100, 1000000) : fallback);
           for (const [i, detail] of details.entries()) {
             const saved = preset.lodDetails?.[i];
             if (!saved) continue;
@@ -1523,6 +1644,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
           tree.options.copy(preset);
           applyTreeTextures(tree);
           tree.generate(details[previewLevel]);
+          updateLODOrder({ invalidate: true });
+          applyLODPreview();
           frameTree(tree, camera, orbitControls, environment.skybox.sun);
           fitTarget = null;
           refreshOptimization();
@@ -1547,6 +1670,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   }
 
   // Initialize the stats overlay with the current tree's counts
+  updateLODOrder();
+  applyLODPreview();
   updateInfoDisplays();
 
   // Mobile expand/collapse functionality
