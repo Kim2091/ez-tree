@@ -1,5 +1,29 @@
 import * as THREE from 'three';
 
+// A bud can carry a limb on in a different direction after a stretch of
+// straight wood. Store changes of heading in radians at fractions of its
+// length, so the same turn can span one ring or several.
+export function limbBends(rng, continuation, evergreen) {
+  const hand = rng.random() < 0.5 ? -1 : 1;
+  const firstPitch = rng.random() < (evergreen ? 0.78 : 0.62)
+    ? -rng.random(0.92, 0.42) : rng.random(0.62, 0.12);
+  const scale = continuation ? 0.74 : 1;
+  const bends = [{
+    at: rng.random(0.43, 0.16), width: rng.random(0.14, 0.055),
+    pitch: scale * firstPitch, yaw: scale * hand * rng.random(0.83, 0.23),
+  }];
+  if (rng.random() < 0.76) {
+    // Some shoots recover from a dip; others continue laterally or droop
+    // again. The second bud can also grow out of the first bend's plane.
+    bends.push({
+      at: rng.random(0.83, 0.57), width: rng.random(0.15, 0.055),
+      pitch: scale * (rng.random() < 0.56 ? rng.random(0.94, 0.38) : -rng.random(0.68, 0.12)),
+      yaw: scale * hand * rng.random(0.53, -0.93),
+    });
+  }
+  return bends;
+}
+
 // An interval represents a season's extension. Short extensions cluster
 // neighboring attachments, long ones leave bare wood between forks.
 export function growthIntervals(count, variation, rng) {

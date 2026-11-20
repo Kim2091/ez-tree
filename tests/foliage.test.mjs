@@ -147,6 +147,7 @@ test('each shipped preset fits the budget with closed or thin blades, including 
   for (const preset of Object.keys(TreePreset)) {
     const tree = new Tree();
     tree.options.branch.structureVariation = 0; // Reference seed from before variable forks.
+    tree.options.branch.limbBends = 0;
     tree.loadPreset(preset);
     tree.options.bark.damage = 0; // Reference budget for an unchipped trunk.
     const target = 25000;

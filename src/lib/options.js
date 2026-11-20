@@ -13,6 +13,7 @@ export default class TreeOptions {
     };
     this.branch = structuredClone(oak.branch);
     this.branch.structureVariation = 0.75;
+    this.branch.limbBends = 0.85;
     this.leaves = {
       ...oak.leaves,
       maps: { color: null, normal: null, roughness: null, subsurface: null },

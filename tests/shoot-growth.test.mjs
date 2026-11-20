@@ -3,6 +3,33 @@ import test from 'node:test';
 import { Vector3 } from 'three';
 import { LeafType, Tree } from '../build/ez-tree.es.js';
 
+test('limb bends concentrate changes of heading without moving forks on the trunk', () => {
+  const tree = new Tree();
+  tree.loadPreset('Ash Medium');
+  function measure(amount) {
+    tree.options.branch.limbBends = amount;
+    tree.generate({ leafScale: 0 });
+    const trunk = new Set(tree.skeleton.branches[0].sections);
+    const limbs = tree.skeleton.branches.filter(b => trunk.has(b.attachment?.a) && b.attachment.a !== b.attachment.b);
+    const starts = limbs.map(b => b.sections[0].origin.toArray());
+    let straight = 0, pronounced = 0, reversals = 0;
+    for (const { sections } of limbs) {
+      const pitches = sections.slice(1).map((s, i) => Math.asin(s.origin.clone().sub(sections[i].origin).normalize().y));
+      const turns = pitches.slice(1).map((p, i) => (p - pitches[i]) * 180 / Math.PI);
+      straight += turns.filter(a => Math.abs(a) < 3).length;
+      pronounced += turns.filter(a => Math.abs(a) > 12).length;
+      if (turns.some(a => a < -5) && turns.some(a => a > 5)) reversals++;
+    }
+    return { starts, straight, pronounced, reversals, indices: tree.branchesMesh.geometry.index.count };
+  }
+  const smooth = measure(0), bent = measure(0.85);
+  assert.deepEqual(bent.starts, smooth.starts);
+  assert.equal(bent.indices, smooth.indices);
+  assert(bent.straight > smooth.straight && bent.pronounced > smooth.pronounced);
+  assert(bent.reversals > smooth.reversals);
+  assert.deepEqual(measure(0.85), bent);
+});
+
 test('the crown has uneven fork spacing, unequal scaffolds and repeatable growth', () => {
   const tree = new Tree();
   tree.options.leaves.count = 0;

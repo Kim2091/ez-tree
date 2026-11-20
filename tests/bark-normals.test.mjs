@@ -47,6 +47,7 @@ test('tapered side branches have outward normals perpendicular to the sloping ba
   tree.options.bark.damage = 0; // Compare uninterrupted rows of tapering bark.
   const branch = tree.options.branch;
   branch.structureVariation = 0;
+  branch.limbBends = 0;
   branch.levels = 1;
   branch.children[0] = 1;
   branch.angle[1] = 75;

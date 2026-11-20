@@ -821,6 +821,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   branchSection.add(structure);
   controls.push({ control: structure, update: () => structure.setValue(tree.options.branch.structureVariation) });
 
+  const limbBends = createSlider('Limb Bends', tree.options.branch.limbBends, 0, 1, 0.01, value => {
+    tree.options.branch.limbBends = value;
+    onChange();
+  });
+  branchSection.add(limbBends);
+  controls.push({ control: limbBends, update: () => limbBends.setValue(tree.options.branch.limbBends) });
+
   // Angle subsection
   const angleSubsection = createSubSection('Angle');
   for (let i = 1; i <= 3; i++) {

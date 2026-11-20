@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RNG from './rng';
 import { chipTrianglesAdded, cutBarkChip } from './bark-chip';
-import { Branch, applyAttachmentOffset, growthIntervals } from './branch';
+import { Branch, applyAttachmentOffset, growthIntervals, limbBends } from './branch';
 import { TreeType } from './enums';
 import { meshFoliage, trianglesPerLeaf } from './foliage';
 import TreeOptions from './options';
@@ -447,6 +447,9 @@ export class Tree extends THREE.Group {
     const sectionLength = branch.length / branch.sectionCount;
     let bendX = 0, bendZ = 0;
     const variation = THREE.MathUtils.clamp(this.options.branch.structureVariation ?? 0, 0, 1);
+    const bends = branch.level > 0 ? THREE.MathUtils.clamp(this.options.branch.limbBends ?? 0, 0, 1) : 0;
+    const turns = bends ? limbBends(new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x94d049bb)),
+      branch.attachment?.a === branch.attachment?.b, this.options.type === TreeType.Evergreen) : [];
     let leaderAxis, handoff, leaderBend;
     if (variation && branch.level === 0 && this.options.type === TreeType.Deciduous) {
       const rng = new RNG(this.options.seed ^ 0x6ac07385);
@@ -493,8 +496,9 @@ export class Tree extends THREE.Group {
       // Perturb the orientation of the next section randomly. The higher the
       // gnarliness, the larger potential perturbation
       const gnarliness = Math.abs(this.options.branch.gnarliness[branch.level]);
-      bendX = 0.62 * bendX + this.rng.random(gnarliness, -gnarliness);
-      bendZ = 0.62 * bendZ + this.rng.random(gnarliness, -gnarliness);
+      const drift = 1 - 0.62 * bends;
+      bendX = 0.62 * bendX + drift * this.rng.random(gnarliness, -gnarliness);
+      bendZ = 0.62 * bendZ + drift * this.rng.random(gnarliness, -gnarliness);
       sectionOrientation.x += bendX;
       sectionOrientation.z += bendZ;
 
@@ -523,14 +527,27 @@ export class Tree extends THREE.Group {
       // slerp form was degenerate at qForce=identity and pushed branches in
       // whatever random direction the section had drifted.
       const sectionUp = new THREE.Vector3(0, 1, 0).applyQuaternion(qSection);
+      let pitch = 0, yaw = 0, activity = 0;
+      for (const bud of turns) {
+        const start = bud.at - bud.width, end = bud.at + bud.width;
+        const weight = THREE.MathUtils.smoothstep((i + 1) / branch.sectionCount, start, end)
+          - THREE.MathUtils.smoothstep(i / branch.sectionCount, start, end);
+        pitch += bends * weight * bud.pitch;
+        yaw += bends * weight * bud.yaw;
+        activity += weight;
+      }
       if (branch.sweep) {
-        // Loaded wood sags near the fork; its growing tip turns back up.
+        pitch += (1 - bends) * branch.sweep * (2.8 * (i + 0.5) / branch.sectionCount - 1) / branch.sectionCount;
+      }
+      if (pitch || yaw) {
         const liftAxis = new THREE.Vector3().crossVectors(sectionUp, up);
-        if (liftAxis.lengthSq() > 1e-8) {
-          const bend = branch.sweep * (2.8 * (i + 0.5) / branch.sectionCount - 1) / branch.sectionCount;
-          qSection.premultiply(new THREE.Quaternion().setFromAxisAngle(liftAxis.normalize(), bend));
-          sectionUp.copy(up).applyQuaternion(qSection);
+        if (liftAxis.lengthSq() < 1e-8 && bends) {
+          liftAxis.set(1, 0, 0).applyQuaternion(qSection);
+          liftAxis.y = 0;
         }
+        if (liftAxis.lengthSq() > 1e-8) qSection.premultiply(new THREE.Quaternion().setFromAxisAngle(liftAxis.normalize(), pitch));
+        if (yaw) qSection.premultiply(new THREE.Quaternion().setFromAxisAngle(up, yaw));
+        sectionUp.copy(up).applyQuaternion(qSection);
       }
       const target = new THREE.Vector3()
         .copy(this.options.branch.force.direction)
@@ -540,7 +557,11 @@ export class Tree extends THREE.Group {
       if (sinFull > 1e-6) {
         axis.divideScalar(sinFull);
         const fullAngle = Math.atan2(sinFull, sectionUp.dot(target));
-        const step = this.options.branch.force.strength / Math.max(sectionRadius, 0.12);
+        // A new bud responds to overhead light more strongly than the
+        // established run it follows. Other force directions remain usable.
+        const overhead = Math.max(0, target.y) * (this.options.branch.force.strength > 0 ? bends : 0);
+        const responseToLight = 1 - 0.94 * overhead * (1 - Math.min(1, activity));
+        const step = responseToLight * this.options.branch.force.strength / Math.max(sectionRadius, 0.12);
         // Ease the response near the light direction so fine twigs retain
         // their own headings instead of all snapping upright.
         const response = step > 0 ? 1 - variation * (1 - Math.min(1, fullAngle * 0.8)) : 1;
