@@ -6,6 +6,7 @@ import { LeafType, Tree } from '../build/ez-tree.es.js';
 test('broadleaf scaffolds fork again, hold their junction at LOD and carry fine leaf-bearing twigs', () => {
   const tree = new Tree();
   tree.loadPreset('Ash Medium');
+  tree.options.leaves.interiorPruning = 0; // Isolate branch growth from canopy exposure.
   tree.options.branch.forkedCrown = false;
   tree.generate({ leafScale: 0 });
   const oldCount = tree.skeleton.branches.length, leafCount = tree.skeleton.leaves.length;
@@ -269,4 +270,31 @@ test('surface roots taper into the ground and can be disabled', () => {
   tree.options.branch.surfaceRoots = false;
   tree.generate();
   assert(!tree.skeleton.branches.some(branch => branch.surfaceRoot));
+});
+
+test('interior pruning is deterministic, monotonic, and preserves whole leaf nodes', () => {
+  for (const name of ['Sugar Maple', 'Ginkgo']) {
+    const tree = new Tree(); tree.loadPreset(name);
+    const snapshots = [];
+    for (const strength of [0, 0.5, 1]) {
+      tree.options.leaves.interiorPruning = strength;
+      tree.generate({ leafDetail: 'thin' });
+      const nodes = new Map();
+      for (const leaf of tree.skeleton.leaves) {
+        assert(leaf.canopyDepth >= 0 && leaf.canopyDepth <= 1);
+        const key = leaf.origin.toArray().map(value => value.toFixed(6)).join('/');
+        nodes.set(key, (nodes.get(key) ?? 0) + 1);
+      }
+      snapshots.push(nodes);
+    }
+    assert(snapshots[0].size > snapshots[1].size && snapshots[1].size > snapshots[2].size, name);
+    for (const [key, count] of snapshots[2]) {
+      assert.equal(snapshots[1].get(key), count);
+      assert.equal(snapshots[0].get(key), count);
+    }
+    tree.generate({ leafDetail: 'thin' });
+    const repeated = tree.skeleton.leaves.map(leaf => leaf.origin.toArray().join('/'));
+    tree.generate({ leafDetail: 'thin' });
+    assert.deepEqual(tree.skeleton.leaves.map(leaf => leaf.origin.toArray().join('/')), repeated);
+  }
 });

@@ -1035,6 +1035,12 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   });
   leavesSection.add(shootColor);
   controls.push({ control: shootColor, update: () => shootColor.setValue(tree.options.leaves.shootColorVariation) });
+  const interiorPruning = createSlider('Interior Leaf Pruning', tree.options.leaves.interiorPruning, 0, 1, 0.01, value => {
+    tree.options.leaves.interiorPruning = value;
+    onChange();
+  });
+  leavesSection.add(interiorPruning);
+  controls.push({ control: interiorPruning, update: () => interiorPruning.setValue(tree.options.leaves.interiorPruning) });
   const leafDamage = createSlider('Leaf Damage', tree.options.leaves.damage, 0, 1, 0.01, value => {
     tree.options.leaves.damage = value;
     applyLODPreview();

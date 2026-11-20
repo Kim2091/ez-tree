@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Vector3 } from 'three';
+import { Texture, Vector3 } from 'three';
 import { Tree } from '../build/ez-tree.es.js';
 import { cutBarkChip } from '../src/lib/bark-chip.js';
 
@@ -115,4 +115,30 @@ test('bark UV phases vary between limbs and reproduce for the same seed', () => 
   const uv = tree.branchesMesh.geometry.attributes.uv.array.slice();
   tree.generate();
   assert.deepEqual(tree.branchesMesh.geometry.attributes.uv.array, uv);
+});
+
+test('photo bark UVs wrap once around the trunk and survive ring reduction', () => {
+  const tree = new Tree(); tree.options.branch.levels = 0;
+  tree.options.branch.surfaceRoots = false; tree.options.bark.damage = 0;
+  tree.options.bark.type = 'PhotoSmooth';
+  tree.options.bark.maps.color = new Texture();
+  tree.options.bark.maps.color.userData.uvAspect = 4328 / 2836;
+  tree.generate();
+  const full = tree.branchesMesh.geometry.attributes.uv;
+  const reduced = tree.createGeometry({ sectionStride: 3 }).branches.attributes.uv;
+  const row = tree.skeleton.branches[0].segmentCount + 1;
+  const rings = tree.skeleton.branches[0].sections.length;
+  for (let i = 0; i < rings; i++) {
+    const first = i * row, last = first + row - 1;
+    assert(Math.abs((full.getX(last) - full.getX(first)) - Math.round(full.getX(last) - full.getX(first))) < 1e-5);
+    assert.equal(full.getY(first), full.getY(last));
+  }
+  assert.equal(full.getX(0), 0);
+  assert.equal(full.getX(row - 1), 1);
+  assert.equal(full.getX(row), 0);
+  for (let i = 0; i < reduced.count; i += row) {
+    const match = Array.from({ length: rings }, (_, j) => j * row)
+      .some(j => Math.abs(full.getX(j) - reduced.getX(i)) < 1e-6 && Math.abs(full.getY(j) - reduced.getY(i)) < 1e-6);
+    assert(match);
+  }
 });

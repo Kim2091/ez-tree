@@ -5,6 +5,7 @@ import { Branch, applyAttachmentOffset, crownFork, growthIntervals, limbBends } 
 import { TreeType, LeafType } from './enums';
 import { bendWillowShoot } from './willow';
 import { meshFoliage, trianglesPerLeaf } from './foliage';
+import { pruneInteriorLeaves } from './canopy';
 import TreeOptions from './options';
 import { loadPreset } from './presets/index';
 import { Trellis } from './trellis';
@@ -518,6 +519,9 @@ export class Tree extends THREE.Group {
       this.#growBranch(branch, tipShoots);
     }
     for (const shoot of tipShoots) this.skeleton.branches.push(shoot);
+    this.skeleton.leaves = pruneInteriorLeaves(this.skeleton.leaves, this.options.leaves.interiorPruning, this.options.seed);
+    const occupied = new Set(this.skeleton.leaves.map(leaf => leaf.attachment?.a));
+    this.skeleton.branches = this.skeleton.branches.filter(branch => !branch.fineTwig || occupied.has(branch.sections.at(-1)));
     if (this.options.branch.surfaceRoots) {
       this.skeleton.branches.push(...surfaceRootBranches(this.skeleton.branches[0], this.options.seed));
     }
@@ -1100,7 +1104,8 @@ export class Tree extends THREE.Group {
     // across thick trunks and thin twigs. Held constant for the whole branch
     // so tapered sections share a wrap count and don't twist the texture
     // longitudinally.
-    const wrapsX = Math.max(
+    const photoBark = this.options.bark.type === 'PhotoSmooth' || this.options.bark.type === 'PhotoFurrowed';
+    const wrapsX = photoBark ? 1 : Math.max(
       1,
       Math.round(turn * baseRadius * this.options.bark.textureScale.x),
     );
@@ -1116,7 +1121,8 @@ export class Tree extends THREE.Group {
 
     // Used later for geometry index generation
     const indexOffset = buffers.verts.length / 3;
-    const tileHeight = Math.max(0.15, turn * baseRadius / wrapsX) * Math.max(0.01, this.options.bark.textureScale.y);
+    const aspect = this.options.bark.maps.color?.userData?.uvAspect ?? 1;
+    const tileHeight = Math.max(0.15, turn * baseRadius / wrapsX) * Math.max(0.01, this.options.bark.textureScale.y) * aspect;
     const phase = (this.options.seed % 571) * 0.11;
     const flareHeight = Math.max(0.04, 1.4 * baseRadius);
     const flareStrength = skeletonBranch.trunk
@@ -1183,7 +1189,7 @@ export class Tree extends THREE.Group {
       // u=wrapsX maps to the same texel as u=0 since wrapsX is an integer.
       buffers.verts.push(...Object.values(first.vertex));
       buffers.normals.push(...Object.values(first.normal));
-      buffers.uvs.push(wrapsX, first.uv.y);
+      buffers.uvs.push(first.uv.x + wrapsX, first.uv.y);
       buffers.colors.push(255, 255, 255);
     }
 

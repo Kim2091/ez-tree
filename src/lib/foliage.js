@@ -321,7 +321,8 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
     }
     const tone = shootColorVariation ? 0.5 + 0.45 * (phase - 0.5) : phase;
     const pigment = shootColorVariation ? (leaf.pigment ?? 0) * (type === LeafType.Pine ? 0.65 : 1) : 0;
-    const brightness = 0.81 + 0.30 * tone;
+    const shade = shootColorVariation ? 1 - 0.12 * (leaf.canopyDepth ?? 0) : 1;
+    const brightness = (0.81 + 0.30 * tone) * shade;
     const red = brightness * (0.92 + 0.22 * tone) * (1 + 0.58 * pigment);
     const green = brightness * (1 + 0.30 * pigment);
     const blue = brightness * (1 - 0.12 * pigment);

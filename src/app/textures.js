@@ -27,7 +27,7 @@ const ready = new WeakMap();
 function surfaceMaps(base, species) {
   if (sets.has(base)) return sets.get(base);
   const photoBark = /\/Photo(?:Smooth|Furrowed)_1K-JPG\//.test(base);
-  // These photo-derived candidates provide albedo only. Explicit nulls clear
+  // These photo-derived textures provide color only. Explicit nulls clear
   // the previous bark's unrelated normal and roughness maps on selection.
   const maps = { normal: null, roughness: null };
   const channels = photoBark ? [['color', 'Color.png']]
@@ -45,6 +45,10 @@ function surfaceMaps(base, species) {
       });
     });
     if (channel === 'color') texture.colorSpace = THREE.SRGBColorSpace;
+    if (photoBark && channel === 'color') {
+      // The longer photographic crops cover more vertical distance per tile.
+      texture.userData.uvAspect = base.includes('PhotoSmooth') ? 4328 / 2836 : 4328 / 2486;
+    }
     if (sided) texture.channel = 1;
     if (channel === 'color' || channel === 'roughness') texture.userData.mimeType = file.endsWith('.png') ? 'image/png' : 'image/jpeg';
     texture.anisotropy = 4;

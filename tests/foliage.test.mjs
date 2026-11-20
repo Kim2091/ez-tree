@@ -498,6 +498,7 @@ test('photo-derived bark loads its PNG and clears unrelated maps', async () => {
     applyTreeTextures(tree);
     assert(requests.includes('/textures/bark/PhotoSmooth_1K-JPG/PhotoSmooth_1K-JPG_Color.png'));
     assert.equal(tree.options.bark.maps.color.userData.mimeType, 'image/png');
+    assert.equal(tree.options.bark.maps.color.userData.uvAspect, 4328 / 2836);
     assert.equal(tree.options.bark.maps.normal, null);
     assert.equal(tree.options.bark.maps.roughness, null);
     await Promise.resolve();

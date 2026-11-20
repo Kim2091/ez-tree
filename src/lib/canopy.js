@@ -1,5 +1,41 @@
-import { Vector3 } from 'three';
+import { MathUtils, Vector3 } from 'three';
 import { applyAttachmentOffset } from './branch';
+
+// Estimate local canopy depth against an angular outer hull. This is a
+// deterministic exposure approximation, not a simulation of annual growth.
+// Leaves sharing a node receive the same decision so pairs and clusters stay
+// intact as pruning strength increases.
+export function pruneInteriorLeaves(leaves, strength, seed) {
+  if (!leaves.length) return leaves;
+  const min = new Vector3(Infinity, Infinity, Infinity), max = new Vector3(-Infinity, -Infinity, -Infinity);
+  for (const leaf of leaves) { min.min(leaf.origin); max.max(leaf.origin); }
+  const center = min.add(max).multiplyScalar(0.5);
+  const outer = new Float64Array(12 * 6);
+  const samples = leaves.map(leaf => {
+    const point = leaf.origin.clone().sub(center), distance = point.length();
+    const azimuth = Math.atan2(point.z, point.x);
+    const column = Math.min(11, Math.floor((azimuth + Math.PI) / (Math.PI * 2) * 12));
+    const row = Math.min(5, Math.floor((distance ? point.y / distance * 0.5 + 0.5 : 0.5) * 6));
+    const cell = row * 12 + column;
+    outer[cell] = Math.max(outer[cell], distance);
+    return { cell, distance };
+  });
+  const amount = MathUtils.clamp(strength ?? 0, 0, 1);
+  return leaves.filter((leaf, i) => {
+    const { cell, distance } = samples[i];
+    const depth = outer[cell] > 0 ? MathUtils.clamp(1 - distance / outer[cell], 0, 1) : 0;
+    leaf.canopyDepth = depth;
+    if (!amount) return true;
+    const p = leaf.origin;
+    let hash = Math.imul(Math.round(p.x * 1000), 0x1f123bb5)
+      ^ Math.imul(Math.round(p.y * 1000), 0x5f356495)
+      ^ Math.imul(Math.round(p.z * 1000), 0x6c8e9cf5) ^ seed;
+    hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+    hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+    const choice = ((hash ^ (hash >>> 16)) >>> 0) / 4294967296;
+    return choice >= amount * MathUtils.smoothstep(depth, 0.08, 0.65);
+  });
+}
 
 // Compare the middle and tip of each blade against the full crown from
 // four horizontal directions. Counts retain information about both gaps
