@@ -22,6 +22,7 @@ export default class TreeOptions {
       maps: { color: null, normal: null, roughness: null, subsurface: null },
       subsurfaceStrength: 0.65,
       shootColorVariation: true,
+      sprigs: false,
       interiorPruning: 0.20,
       damage: 0.05,
       roundedNormals: true,

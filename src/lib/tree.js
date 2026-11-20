@@ -159,7 +159,7 @@ function splitTerminalShoot(sections, leaves, firstLeaf, rng, ground = -Infinity
     leaf.origin.copy(next.origin);
     leaf.attachment = next.attachment;
   }
-  return { sections: knots, attachment: base.attachment, baseRadius: radius, segmentCount: 3, trunk: false };
+  return { sections: knots, attachment: base.attachment, baseRadius: radius, segmentCount: 3, trunk: false, terminalShoot: true };
 }
 
 // Keep both ends, then split the interval with the largest centerline error
@@ -271,8 +271,9 @@ export class Tree extends THREE.Group {
    * @property {number} [segmentFactor=1] Radial segment multiplier;
    *   segments = max(3, round(segmentCount * segmentFactor))
    * @property {number} [leafStride=1] Average spacing between retained leaf sites
-   * @property {string} [leafDetail='full'] Blade resolution: full, reduced, coarse or thin
+   * @property {string} [leafDetail='full'] Blade resolution: full, reduced, coarse, thin, compact or micro
    * @property {boolean} [fineTwigs=true] Include small woody spur shoots
+   * @property {number} [sprigStep=1] Keep one in this many terminal sprigs
    * @property {number} [leafScale=1] Size multiplier for the kept leaves,
    *   typically 1/sqrt(kept fraction) to preserve canopy coverage
    */
@@ -520,6 +521,7 @@ export class Tree extends THREE.Group {
     }
     for (const shoot of tipShoots) this.skeleton.branches.push(shoot);
     this.skeleton.leaves = pruneInteriorLeaves(this.skeleton.leaves, this.options.leaves.interiorPruning, this.options.seed);
+    this.skeleton.leaves.forEach((leaf, index) => { leaf.siteIndex = index; });
     const occupied = new Set(this.skeleton.leaves.map(leaf => leaf.attachment?.a));
     this.skeleton.branches = this.skeleton.branches.filter(branch => !branch.fineTwig || occupied.has(branch.sections.at(-1)));
     if (this.options.branch.surfaceRoots) {
@@ -537,6 +539,8 @@ export class Tree extends THREE.Group {
     const segmentFactor = detail.segmentFactor ?? 1;
     const leafStride = Math.max(1, detail.leafStride ?? 1);
     const leafScale = detail.leafScale ?? 1;
+    const sprigStep = Math.max(1, Math.floor(detail.sprigStep ?? 1));
+    const keepSprig = item => item.sprigGroup === undefined || item.sprigGroup % sprigStep === 0;
 
     const branches = {
       verts: [],
@@ -549,6 +553,7 @@ export class Tree extends THREE.Group {
 
     const offsets = new Map();
     for (const skeletonBranch of this.skeleton.branches) {
+      if (!keepSprig(skeletonBranch)) continue;
       if (skeletonBranch.fineTwig && detail.fineTwigs === false) {
         // Move the attached leaves back to the parent shoot when its tiny
         // woody spur is omitted. Include any shift from reducing that parent.
@@ -561,7 +566,7 @@ export class Tree extends THREE.Group {
 
     const maps = this.options.leaves.maps;
     const faceUVs = this.options.leaves.textured && (maps?.roughness?.channel === 1 || maps?.normal?.channel === 1);
-    const leaves = meshFoliage(this.skeleton.leaves, this.options.leaves, leafStride, leafScale,
+    const leaves = meshFoliage(this.skeleton.leaves.filter(keepSprig), this.options.leaves, leafStride, leafScale,
       detail.leafDetail, offsets, faceUVs, this.options.seed, collectInstances);
     return { branches, leaves };
   }
@@ -571,10 +576,10 @@ export class Tree extends THREE.Group {
    * of each candidate before allocating any vertex buffers. When the target
    * is below the smallest supported mesh, return the lowest-cost result.
    * @param {number} target Maximum triangles, including any visible trellis
-   * @param {{thinLeaves?: boolean}} options Use thin blades to retain more occupied leaf sites
+   * @param {{thinLeaves?: boolean, compactLeaves?: boolean, microLeaves?: boolean}} options Select a low-cost opaque blade type
    * @returns {LODDetail}
    */
-  fitTriangleBudget(target, { thinLeaves = false } = {}) {
+  fitTriangleBudget(target, { thinLeaves = false, compactLeaves = false, microLeaves = false } = {}) {
     if (!this.skeleton) this.#generateSkeleton();
     let fixed = 0;
     for (const branch of this.skeleton.branches) {
@@ -582,36 +587,42 @@ export class Tree extends THREE.Group {
       if (branch.chip?.threshold < this.options.bark.damage) fixed += chipTrianglesAdded;
     }
     this.trellisMesh?.traverseVisible(o => { if (o.isMesh) fixed += o.geometry.index.count / 3; });
-    const count = this.skeleton.leaves.length;
-    const bladeDetails = thinLeaves ? ['thin'] : ['full', 'reduced', 'coarse'];
+    const fullCount = this.skeleton.leaves.length;
+    const efficientLeaves = thinLeaves || compactLeaves || microLeaves;
+    const bladeDetails = microLeaves ? ['micro'] : compactLeaves ? ['compact'] : thinLeaves ? ['thin'] : ['full', 'reduced', 'coarse'];
     let best, bestExcess = Infinity, bestPenalty = Infinity;
-    for (const sectionStride of [1, 2, 3, 4, 6, 8, 16]) {
-      const ringPenalty = thinLeaves
-        ? 0.30 * Math.log2(sectionStride) + 2 * branchShapeError(this.skeleton.branches.filter(branch => !branch.fineTwig), sectionStride, this.options.leaves.size)
-        : 0.55 * Math.log2(sectionStride);
-      for (const segmentFactor of [1, 0.75, 0.5, 0.25]) {
-        let branches = fixed;
-        for (const { sections, segmentCount, fineTwig } of this.skeleton.branches) {
-          if (fineTwig) continue;
-          const spans = Math.ceil((sections.length - 1) / sectionStride);
-          branches += 2 * spans * Math.max(3, Math.round(segmentCount * segmentFactor));
-        }
-        for (const [tier, leafDetail] of bladeDetails.entries()) {
-          const cost = trianglesPerLeaf(this.options.leaves.type, leafDetail);
-          const capacity = Math.max(1, Math.floor((target - branches) / cost));
-          const precision = thinLeaves ? 100 : 1;
-          const leafStride = Math.min(128, Math.max(1, Math.ceil(count * precision / capacity) / precision));
-          const total = branches + Math.ceil(count / leafStride) * cost;
-          const excess = Math.max(0, total - target);
-          // Prefer preserving occupied leaf sites before spending on blade detail.
-          const penalty = 1.8 * Math.log2(leafStride) + tier
-            + ringPenalty + 0.4 * Math.log2(1 / segmentFactor);
-          if (excess < bestExcess || (excess === bestExcess && penalty < bestPenalty)) {
-            bestExcess = excess;
-            bestPenalty = penalty;
-            best = { sectionStride, segmentFactor, leafStride, leafDetail, fineTwigs: false,
-              leafScale: thinLeaves ? Math.min(1.65, Math.sqrt(leafStride))
-                : Math.min(1.5, Math.pow(leafStride, 0.25)) };
+    for (const sprigStep of this.options.leaves.sprigs ? [1, 2, 3, 5] : [1]) {
+      const activeBranches = this.skeleton.branches.filter(branch => branch.sprigGroup === undefined || branch.sprigGroup % sprigStep === 0);
+      const count = this.skeleton.leaves.filter(leaf => leaf.sprigGroup === undefined || leaf.sprigGroup % sprigStep === 0).length;
+      for (const sectionStride of [1, 2, 3, 4, 6, 8, 16]) {
+        const ringPenalty = efficientLeaves
+          ? 0.30 * Math.log2(sectionStride) + 2 * branchShapeError(activeBranches.filter(branch => !branch.fineTwig && !branch.sprigTwig), sectionStride, this.options.leaves.size)
+          : 0.55 * Math.log2(sectionStride);
+        for (const segmentFactor of [1, 0.75, 0.5, 0.25]) {
+          let branches = fixed;
+          for (const { sections, segmentCount, fineTwig } of activeBranches) {
+            if (fineTwig) continue;
+            const spans = Math.ceil((sections.length - 1) / sectionStride);
+            branches += 2 * spans * Math.max(3, Math.round(segmentCount * segmentFactor));
+          }
+          for (const [tier, leafDetail] of bladeDetails.entries()) {
+            const cost = trianglesPerLeaf(this.options.leaves.type, leafDetail);
+            const capacity = Math.max(1, Math.floor((target - branches) / cost));
+            const precision = efficientLeaves ? 100 : 1;
+            const leafStride = Math.min(128, Math.max(1, Math.ceil(count * precision / capacity) / precision));
+            const total = branches + Math.ceil(count / leafStride) * cost;
+            const excess = Math.max(0, total - target);
+            // Prefer preserving occupied leaf sites before spending on blade detail.
+            const penalty = 1.8 * Math.log2(leafStride * Math.max(1, fullCount / Math.max(1, count))) + tier
+              + ringPenalty + 0.4 * Math.log2(1 / segmentFactor);
+            if (excess < bestExcess || (excess === bestExcess && penalty < bestPenalty)) {
+              bestExcess = excess;
+              bestPenalty = penalty;
+              best = { sectionStride, segmentFactor, leafStride, leafDetail, fineTwigs: false, sprigStep,
+                leafScale: efficientLeaves ? Math.min(sprigStep > 1 && target >= 100000 ? 1.3 : 1.65,
+                  Math.sqrt(leafStride * Math.max(1, fullCount / Math.max(1, count))))
+                  : Math.min(1.5, Math.pow(leafStride * Math.max(1, fullCount / Math.max(1, count)), 0.25)) };
+            }
           }
         }
       }
@@ -874,8 +885,20 @@ export class Tree extends THREE.Group {
     }
 
     // If we are on the last branch level, generate leaves
+    const sprigs = this.options.leaves.sprigs && this.options.type === TreeType.Deciduous && branch.level > 0;
     if (branch.level === this.options.branch.levels) {
-      this.generateLeaves(sections, branch.vigor, tipShoots);
+      if (sprigs) {
+        // Consume the normal leaf-growth RNG exactly as before so toggling
+        // sprigs does not reshape the rest of the tree for the same seed.
+        const leafCount = this.skeleton.leaves.length, shootCount = tipShoots.length;
+        this.generateLeaves(sections, branch.vigor, tipShoots);
+        this.skeleton.leaves.length = leafCount;
+        tipShoots.length = shootCount;
+        const growth = this.rng;
+        this.rng = new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length, 0x2c1b3c6d));
+        try { this.generateSprigs(sections, branch.vigor, tipShoots); }
+        finally { this.rng = growth; }
+      } else this.generateLeaves(sections, branch.vigor, tipShoots);
     } else if (branch.level < this.options.branch.levels) {
       if (this.options.type === TreeType.Evergreen && branch.level === 0) {
         this.generateLeaves(sections.slice(-2), 0.32);
@@ -900,7 +923,7 @@ export class Tree extends THREE.Group {
         leaf.pigment = 0.80 * shoot - 0.65 + (0.28 + 0.55 * shoot) * tip;
       }
     }
-    if (forked && branch.level > 0 && branch.level === this.options.branch.levels) {
+    if (forked && !sprigs && branch.level > 0 && branch.level === this.options.branch.levels) {
       // Several buds can form side shoots along a growing terminal branch.
       // Willow keeps its hanging branchlets rather than these rising twigs.
       const oppositeOrWillow = [LeafType.Willow, LeafType.Maple, LeafType.Ash].includes(this.options.leaves.type);
@@ -1019,9 +1042,10 @@ export class Tree extends THREE.Group {
 
   // Opposite pairs on ash share a node. The other blades and needle bundles
   // follow successive nodes around the twig, with a different phase per shoot.
-  generateLeaves(sections, vigor = 1, tipShoots = []) {
-    const { type, angle, start } = this.options.leaves;
-    const count = Math.round(this.options.leaves.count * (type === 'pine' ? Math.min(1, 0.32 + vigor) : 1));
+  generateLeaves(sections, vigor = 1, tipShoots = [], config = {}) {
+    const { type, angle } = this.options.leaves;
+    const start = config.start ?? this.options.leaves.start;
+    const count = Math.round((config.count ?? this.options.leaves.count) * (type === 'pine' ? Math.min(1, 0.32 + vigor) : 1));
     const phase = this.rng.random(turn);
     const paired = type === 'ash' || type === 'maple';
     // Ginkgo's short spur shoots bear clusters of fan leaves.
@@ -1058,6 +1082,49 @@ export class Tree extends THREE.Group {
         this.#recordLeaf(origin, rotation, type === 'pine' ? Math.min(1, 0.58 + vigor) : 1, attachment);
         if (clustered && this.skeleton.leaves.length > previousCount) this.skeleton.leaves.at(-1).shootAttachment = shootAttachment;
       }
+    }
+  }
+
+  // A short terminal spray replaces the uniform row of leaves along a long
+  // branch. Each shoot has its own tapered woody axis and ordinary leaf sites,
+  // so damage, selection, LODs and exports use the same existing pipeline.
+  generateSprigs(sections, vigor, tipShoots) {
+    if (this.options.leaves.count <= 0) return;
+    const phase = this.rng.random(turn);
+    const type = this.options.leaves.type;
+    const shootCount = 5;
+    const leafCount = Math.max(4, Math.round(this.options.leaves.count * 0.8));
+    for (let i = 0; i < shootCount; i++) {
+      // Willows carry foliage along their pendulous shoots; other non-oak
+      // species also need some inner sprays to avoid a hollow shell.
+      const start = type === LeafType.Willow ? 0.08 : type === LeafType.Oak ? 0.55 : 0.25;
+      const t = start + (0.97 - start) * (i + this.rng.random(0.85, 0.15)) / shootCount;
+      const { origin, frame, radius, attachment } = sampleBranch(sections, t);
+      const azimuth = phase + goldenAngle * i + this.rng.random(0.25, -0.25);
+      const angle = this.rng.random(1.10, 0.62);
+      const direction = new THREE.Vector3(Math.cos(azimuth) * Math.sin(angle), Math.cos(angle),
+        Math.sin(azimuth) * Math.sin(angle)).applyQuaternion(frame).normalize();
+      if (type === LeafType.Willow) direction.y -= 0.55;
+      direction.normalize();
+      if (this.options.branch.stopAtGround && origin.y < 0.04 && direction.y < 0) {
+        direction.y = 0.05;
+        direction.normalize();
+      }
+      let length = Math.min(sections.at(-1).distance * 0.48, this.options.leaves.size * this.rng.random(4, 2.5));
+      if (this.options.branch.stopAtGround && direction.y < 0) length = Math.min(length, Math.max(0, (origin.y - 0.03) / -direction.y));
+      if (length < 0.001) continue;
+      const orientation = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(up, direction));
+      const baseRadius = Math.max(0.001, Math.min(radius * 0.3, 0.009));
+      const shoot = [0, 0.5, 1].map(tip => ({ origin: origin.clone().addScaledVector(direction, length * tip),
+        orientation: orientation.clone(), radius: baseRadius * (1 - 0.96 * tip), distance: length * tip }));
+      const firstBranch = tipShoots.length, firstLeaf = this.skeleton.leaves.length;
+      tipShoots.push({ sections: shoot, attachment, baseRadius, segmentCount: 3, trunk: false, sprigTwig: true });
+      this.generateLeaves(shoot, vigor, tipShoots, { count: leafCount, start: 0.08 });
+      // Rotate the surviving subset per shoot so distant LODs do not all
+      // retain the same side and same height of every branch.
+      const group = (i + Math.floor(phase / turn * shootCount)) % shootCount;
+      for (let n = firstBranch; n < tipShoots.length; n++) tipShoots[n].sprigGroup = group;
+      for (let n = firstLeaf; n < this.skeleton.leaves.length; n++) this.skeleton.leaves[n].sprigGroup = group;
     }
   }
 

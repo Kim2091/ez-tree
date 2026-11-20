@@ -37,10 +37,18 @@ const thinStations = new Map([
   [stalk, [stalk[0]]],
   [needle, [needle[0]]],
 ]);
+// Compact blades trade fine edge detail for more individual opaque leaves.
+// Maple and ginkgo retain their distinctive thin outlines instead.
+const compactStations = new Map([
+  [willow, [willow[3]]], [oak, [oak[9], oak[19]]], [aspen, [aspen[5]]],
+  [leaflet, [leaflet[3]]], [stalk, [stalk[0]]], [needle, [needle[0]]],
+]);
+const microStations = new Map(compactStations);
+microStations.set(oak, [oak[9]]);
 
 function makeTemplate(type, detail, variant, damagePattern) {
-  if (type === LeafType.Ginkgo) return makeGinkgoTemplate(detail, variant, damagePattern);
-  if (type === LeafType.Maple) return makeSugarMapleTemplate(detail, variant, damagePattern);
+  if (type === LeafType.Ginkgo) return makeGinkgoTemplate(detail === 'compact' || detail === 'micro' ? 'thin' : detail, variant, damagePattern);
+  if (type === LeafType.Maple) return makeSugarMapleTemplate(detail === 'compact' || detail === 'micro' ? 'thin' : detail, variant, damagePattern);
   const positions = [], colors = [], indices = [], uvs = [];
   const lowerFaces = [];
   const color = new THREE.Color({
@@ -135,9 +143,9 @@ function makeTemplate(type, detail, variant, damagePattern) {
 
     const softEdge = broad && detail === 'full';
     const root = vertex(0, 0, 0, 0.68);
-    if (detail === 'thin') {
+    if (detail === 'thin' || detail === 'compact' || detail === 'micro') {
       const tip = vertex(0, 1, profile === stalk ? 0 : -0.065, 1.04);
-      const stations = thinStations.get(profile);
+      const stations = (detail === 'micro' ? microStations : detail === 'compact' ? compactStations : thinStations).get(profile);
       let previous;
       for (const [y, width] of stations) {
         const bend = profile === stalk ? 0 : 0.085 * Math.sin(Math.PI * y) - 0.065 * y * y;
@@ -232,7 +240,7 @@ function makeTemplate(type, detail, variant, damagePattern) {
 const templates = new Map();
 function getTemplate(type, detail, damagePattern = -1) {
   const shape = Object.values(LeafType).includes(type) ? type : LeafType.Oak;
-  const resolution = ['thin', 'coarse', 'reduced'].includes(detail) ? detail : 'full';
+  const resolution = ['micro', 'compact', 'thin', 'coarse', 'reduced'].includes(detail) ? detail : 'full';
   const key = shape + '/' + resolution + '/' + damagePattern;
   if (!templates.has(key)) {
     templates.set(key, [-1, -0.5, 0, 0.5, 1].map(variant => makeTemplate(shape, resolution, variant, damagePattern)));
@@ -299,17 +307,18 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
   for (let k = 0; k < count; k++) {
     const i = selected ? selected[k] : k;
     const leaf = placements[i];
+    const identity = leaf.siteIndex ?? i;
     applyAttachmentOffset(origin.copy(leaf.origin), leaf.attachment, offsets);
     const start = k * perLeaf;
     orientation.setFromEuler(leaf.orientation);
     const size = leaf.size * scale;
-    const phase = (i * 0.61803398875 + leaf.size) % 1;
+    const phase = (identity * 0.61803398875 + leaf.size) % 1;
     const pose = Math.floor(phase * variants.length);
     let template = variants[pose];
     if (damage > 0) {
       // Separate bits select incidence and wound shape. Raising incidence
       // reveals additional injuries while preserving every existing one.
-      let hash = Math.imul(i + 1, 0x9e3779b1) ^ seed;
+      let hash = Math.imul(identity + 1, 0x9e3779b1) ^ seed;
       hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
       hash ^= hash >>> 13;
       if ((hash & 0xffff) < damage * 65536) {
@@ -351,5 +360,5 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
       indices[firstIndex + j] = start + template.indices[j];
     }
   }
-  return { verts, normals, uvs, faceUVs, colors, indices, flex, leafSites: count, doubleSided: detail === 'thin', instances };
+  return { verts, normals, uvs, faceUVs, colors, indices, flex, leafSites: count, doubleSided: ['thin', 'compact', 'micro'].includes(detail), instances };
 }

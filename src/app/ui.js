@@ -701,7 +701,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     applyLODPreview();
     updateInfoDisplays();
   }
-  const bladeOptions = { Full: 'full', Reduced: 'reduced', Coarse: 'coarse', 'Thin (denser canopy)': 'thin' };
+  const bladeOptions = { Full: 'full', Reduced: 'reduced', Coarse: 'coarse', 'Thin (denser canopy)': 'thin', 'Compact (more leaves)': 'compact', 'Micro (simplest blades)': 'micro' };
   const leafDetail = createSelect('Blade Detail', bladeOptions,
     'full', value => editDetail('leafDetail', value));
   optimization.add(leafDetail);
@@ -717,13 +717,27 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   }
   optimization.add(createSlider('Triangle Budget', budget, 100, 1000000, 100, value => { budget = value; }));
   optimization.add(createButton('Fit to Budget', 'cube', () => {
-    const thinLeaves = details[previewLevel].leafDetail === 'thin';
-    details[previewLevel] = tree.fitTriangleBudget(budget, { thinLeaves });
+    const leafDetail = details[previewLevel].leafDetail;
+    details[previewLevel] = tree.fitTriangleBudget(budget, { thinLeaves: leafDetail === 'thin', compactLeaves: leafDetail === 'compact', microLeaves: leafDetail === 'micro' });
     fitTarget = budget;
     applyLODPreview();
     refreshOptimization();
     updateInfoDisplays();
   }));
+  const denseFit = createButton('Fit Dense Canopy', 'cube', () => {
+    // At tight budgets the cost of woody sprays can outweigh their coverage.
+    // Maple and ginkgo retain their higher-cost distinctive leaf outlines.
+    const threshold = [LeafType.Maple, LeafType.Ginkgo].includes(tree.options.leaves.type) ? 200000 : 100000;
+    tree.options.leaves.sprigs = tree.options.type === TreeType.Deciduous && budget >= threshold;
+    tree.generate({ ...details[previewLevel], leafDetail: 'micro' });
+    details[previewLevel] = tree.fitTriangleBudget(budget, { microLeaves: true });
+    fitTarget = budget;
+    applyLODPreview();
+    refreshOptimization();
+    refreshAllControls();
+  });
+  denseFit.element.title = 'Fit more opaque leaves; at larger budgets add terminal sprigs. Micro blades simplify leaf outlines.';
+  optimization.add(denseFit);
   const fitStatus = document.createElement('div');
   fitStatus.className = 'control-label';
   fitStatus.setAttribute('role', 'status');
@@ -744,7 +758,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   const barkDamage = createSlider('Bark Chipping', tree.options.bark.damage, 0, 1, 0.01, value => {
     tree.options.bark.damage = value;
     if (fitTarget !== null) {
-      details[previewLevel] = tree.fitTriangleBudget(fitTarget, { thinLeaves: details[previewLevel].leafDetail === 'thin' });
+      const leafDetail = details[previewLevel].leafDetail;
+      details[previewLevel] = tree.fitTriangleBudget(fitTarget, { thinLeaves: leafDetail === 'thin', compactLeaves: leafDetail === 'compact', microLeaves: leafDetail === 'micro' });
       refreshOptimization();
     }
     applyLODPreview();
@@ -1041,6 +1056,17 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   });
   leavesSection.add(interiorPruning);
   controls.push({ control: interiorPruning, update: () => interiorPruning.setValue(tree.options.leaves.interiorPruning) });
+  const sprigsToggle = createToggle('Terminal Leaf Sprigs', tree.options.leaves.sprigs, value => {
+    tree.options.leaves.sprigs = value;
+    // A dense crown of fully tessellated blades can allocate millions of
+    // triangles immediately. Start with editable compact blades when opting
+    // into sprigs; the user can still explicitly choose Full afterwards.
+    if (value && details[previewLevel].leafDetail === 'full') details[previewLevel].leafDetail = 'compact';
+    onChange();
+    refreshOptimization();
+  });
+  leavesSection.add(sprigsToggle);
+  controls.push({ control: sprigsToggle, update: () => sprigsToggle.setValue(tree.options.leaves.sprigs) });
   const leafDamage = createSlider('Leaf Damage', tree.options.leaves.damage, 0, 1, 0.01, value => {
     tree.options.leaves.damage = value;
     applyLODPreview();
@@ -1492,6 +1518,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
               );
             }
             if (Object.values(bladeOptions).includes(saved.leafDetail)) detail.leafDetail = saved.leafDetail;
+            if (Number.isFinite(saved.sprigStep)) detail.sprigStep = THREE.MathUtils.clamp(Math.round(saved.sprigStep), 1, 5);
           }
           tree.options.copy(preset);
           applyTreeTextures(tree);

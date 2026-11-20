@@ -1,10 +1,103 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { Color, DoubleSide, FrontSide, Line3, Matrix4, Quaternion, ShaderLib, Texture, TextureLoader, Vector2, Vector3 } from 'three';
 import { LeafType, Tree, TreePreset } from '../build/ez-tree.es.js';
 import { applyTreeTextures } from '../src/app/textures.js';
+import { exportUSD } from '../src/app/usd.js';
+
+test('sprigged compact foliage fits budgets and keeps opaque species meshes', () => {
+  for (const name of ['Oak Medium', 'Sugar Maple', 'Ginkgo', 'Weeping Willow', 'Ash Medium']) {
+    const tree = new Tree(); tree.loadPreset(name);
+    tree.options.leaves.sprigs = true;
+    tree.generate({ leafDetail: 'micro' });
+    const twigs = tree.skeleton.branches.filter(branch => branch.sprigTwig);
+    assert(twigs.length > 0, name);
+    assert(twigs.every(branch => branch.sections.length === 3 && branch.sections.at(-1).radius < branch.sections[0].radius), name);
+    assert(twigs.every(branch => branch.sections.every(section => section.origin.y >= 0.03 - 1e-6)), name);
+    for (const target of [25000, 240000]) {
+      const detail = tree.fitTriangleBudget(target, { microLeaves: true });
+      const { branches, leaves } = tree.createGeometry(detail);
+      assert((branches.index.count + leaves.index.count) / 3 <= target, name);
+      assert(leaves.userData.leafSites > 0 && leaves.userData.doubleSided, name);
+      assert.equal(tree.leavesMesh.material.transparent, false);
+      assert.equal(tree.leavesMesh.material.alphaTest, 0);
+      assert.deepEqual(tree.createGeometry(detail).leaves.index.array, leaves.index.array);
+      branches.dispose(); leaves.dispose();
+    }
+  }
+});
+
+test('sprigs preserve the main branches for a fixed seed', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Medium');
+  const structure = () => createHash('sha256').update(JSON.stringify(tree.skeleton.branches
+    .filter(branch => !branch.fineTwig && !branch.sprigTwig && !branch.terminalShoot)
+    .map(branch => branch.sections.map(section => section.origin.toArray())))).digest('hex');
+  const before = structure();
+  tree.options.leaves.sprigs = true; tree.generate({ leafDetail: 'micro' });
+  assert.equal(structure(), before);
+});
+
+test('micro blades retain more oak leaf sites within the same budgets', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Medium');
+  const original = tree.createGeometry(tree.fitTriangleBudget(25000, { thinLeaves: true }));
+  const simple = tree.createGeometry(tree.fitTriangleBudget(25000, { microLeaves: true }));
+  assert(simple.leaves.userData.leafSites >= original.leaves.userData.leafSites * 2);
+  assert.equal(simple.leaves.index.count / 3, simple.leaves.userData.leafSites * 2);
+  tree.options.leaves.sprigs = true; tree.generate({ leafDetail: 'micro' });
+  const dense = tree.createGeometry(tree.fitTriangleBudget(240000, { microLeaves: true }));
+  assert(dense.leaves.userData.leafSites > 50000);
+  assert((dense.branches.index.count + dense.leaves.index.count) / 3 <= 240000);
+  for (const model of [original, simple, dense]) { model.branches.dispose(); model.leaves.dispose(); }
+});
+
+test('micro ginkgo and sugar maple retain their thin species outline', () => {
+  for (const name of ['Ginkgo', 'Sugar Maple']) {
+    const tree = new Tree(); tree.loadPreset(name);
+    tree.options.branch.levels = 0; tree.options.leaves.count = 4;
+    tree.generate({ leafDetail: 'thin' });
+    const thin = tree.createGeometry({ leafDetail: 'thin' }).leaves;
+    const micro = tree.createGeometry({ leafDetail: 'micro' }).leaves;
+    assert.deepEqual(micro.index.array, thin.index.array, name);
+    assert.deepEqual(micro.attributes.position.array, thin.attributes.position.array, name);
+    assert(micro.userData.doubleSided);
+    thin.dispose(); micro.dispose();
+  }
+});
+
+test('sprig and micro leaf geometry exports as opaque GLB and USD', async () => {
+  const tree = new Tree();
+  tree.options.branch.levels = 1; tree.options.branch.children[0] = 2;
+  tree.options.leaves.count = 8; tree.options.leaves.sprigs = true;
+  tree.generate({ leafDetail: 'micro' });
+  const detail = { leafDetail: 'micro', sprigStep: 2, leafStride: 1.5 };
+  const baked = tree.createGeometry(detail).leaves;
+  const instanced = tree.createInstancedFoliage(detail);
+  assert.equal(instanced.children.reduce((total, mesh) => total + mesh.count, 0), baked.userData.leafSites);
+  instanced.traverse(object => object.geometry?.dispose());
+  baked.dispose();
+  const previous = globalThis.FileReader;
+  globalThis.FileReader = class {
+    readAsArrayBuffer(blob) { blob.arrayBuffer().then(result => { this.result = result; this.onloadend(); }); }
+  };
+  try {
+    const glb = await new GLTFExporter().parseAsync(tree, { binary: true });
+    const view = new DataView(glb);
+    assert.equal(view.getUint32(0, true), 0x46546c67);
+    const json = JSON.parse(new TextDecoder().decode(new Uint8Array(glb, 20, view.getUint32(12, true))).trim());
+    assert(json.materials.some(material => material.doubleSided && (!material.alphaMode || material.alphaMode === 'OPAQUE')));
+    const loaded = await new GLTFLoader().parseAsync(glb, '');
+    let loadedTriangles = 0;
+    loaded.scene.traverse(mesh => { if (mesh.isMesh) loadedTriangles += mesh.geometry.index.count / 3; });
+    assert.equal(loadedTriangles, (tree.branchesMesh.geometry.index.count + tree.leavesMesh.geometry.index.count) / 3);
+    const usd = await exportUSD(tree).text();
+    assert(usd.startsWith('#usda 1.0'));
+    assert(usd.includes('uniform bool doubleSided = true'));
+    assert(usd.includes('def Mesh "Leaves"'));
+  } finally { globalThis.FileReader = previous; }
+});
 
 test('increasing damage keeps earlier wounds and their leaf identities across LODs', () => {
   const tree = new Tree();
@@ -14,7 +107,7 @@ test('increasing damage keeps earlier wounds and their leaf identities across LO
     tree.options.leaves.type = type;
     tree.generate({ leafDetail: 'thin' });
     let reference;
-    for (const leafDetail of ['thin', 'coarse', 'reduced', 'full']) {
+    for (const leafDetail of ['micro', 'compact', 'thin', 'coarse', 'reduced', 'full']) {
       const meshes = [0, 0.35, 1].map(damage => {
         tree.options.leaves.damage = damage;
         return tree.createGeometry({ leafDetail }).leaves;
