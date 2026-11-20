@@ -155,3 +155,84 @@ test('intermediate branch rings soften turns while retaining growth knots', () =
   }
   assert(checked > 50);
 });
+
+test('maple and ash grow opposite side shoots, while oak remains alternate', () => {
+  for (const [name, expectPairs] of [['Sugar Maple', true], ['Ash Medium', true], ['Oak Medium', false]]) {
+    const tree = new Tree(); tree.loadPreset(name);
+    const nodes = new Map();
+    for (const branch of tree.skeleton.branches) {
+      if (!branch.attachment || branch.attachment.a === branch.attachment.b) continue;
+      const key = branch.sections[0].origin.toArray().map(x => x.toFixed(6)).join('/');
+      nodes.set(key, (nodes.get(key) ?? 0) + 1);
+    }
+    const pairs = [...nodes.values()].filter(count => count > 1).length;
+    if (expectPairs) assert(pairs > 50, name);
+    else assert.equal(pairs, 0, name);
+  }
+});
+
+test('weeping willow shoots terminate above the local ground across seeds and LODs', () => {
+  const tree = new Tree(); tree.loadPreset('Weeping Willow');
+  for (const seed of [1, 2, 3, 45122]) {
+    tree.options.seed = seed;
+    tree.generate({ leafScale: 0 });
+    for (const branch of tree.skeleton.branches) {
+      for (const section of branch.sections) assert(section.origin.y >= -1e-8, `seed ${seed}`);
+    }
+    const g = tree.createGeometry({ sectionStride: 4, leafScale: 0 }).branches;
+    assert(g.index.count > 0);
+  }
+});
+
+test('ginkgo leaves grow in clusters on short-shoot nodes', () => {
+  const tree = new Tree(); tree.loadPreset('Ginkgo');
+  const nodes = new Map();
+  for (const leaf of tree.skeleton.leaves) {
+    const key = leaf.origin.toArray().map(x => x.toFixed(6)).join('/');
+    nodes.set(key, (nodes.get(key) ?? 0) + 1);
+  }
+  const clusters = [...nodes.values()].filter(n => n >= 3 && n <= 4);
+  assert(clusters.length > 100);
+  const detail = tree.fitTriangleBudget(25000, { thinLeaves: true });
+  const geometry = tree.createGeometry(detail).leaves;
+  const { position } = geometry.attributes;
+  const perLeaf = position.count / geometry.userData.leafSites;
+  const roots = [];
+  // Ginkgo's second template vertex is its petiole base.
+  for (let i = 0; i < position.count; i += perLeaf) roots.push(new Vector3().fromBufferAttribute(position, i + 1));
+  const grouped = roots.filter(root => roots.filter(other => root.distanceToSquared(other) < 0.00005).length >= 4);
+  assert(grouped.length > roots.length * 0.25);
+});
+
+test('ginkgo spur geometry carries leaf clusters and collapses them onto the parent for LODs', () => {
+  const tree = new Tree();
+  tree.loadPreset('Ginkgo');
+  tree.options.branch.levels = 0;
+  tree.options.leaves.count = 12;
+  tree.generate();
+  const twig = tree.skeleton.branches.find(branch => branch.fineTwig);
+  assert(twig);
+  const leaf = tree.skeleton.leaves.findIndex(site => site.attachment.a === twig.sections[1]);
+  assert(leaf >= 0);
+  const full = tree.createGeometry({ fineTwigs: true });
+  const reduced = tree.createGeometry({ fineTwigs: false });
+  assert(full.branches.index.count > reduced.branches.index.count);
+  const positions = full.leaves.attributes.position;
+  const perLeaf = positions.count / tree.skeleton.leaves.length;
+  const fullRoot = new Vector3().fromBufferAttribute(positions, leaf * perLeaf + 1);
+  const lowRoot = new Vector3().fromBufferAttribute(reduced.leaves.attributes.position, leaf * perLeaf + 1);
+  const expected = twig.sections[1].origin.clone().sub(twig.sections[0].origin);
+  assert(fullRoot.sub(lowRoot).distanceTo(expected) < 1e-5);
+});
+
+test('ginkgo primary limbs are distributed on both sides of the trunk fork', () => {
+  const tree = new Tree(); tree.loadPreset('Ginkgo');
+  const trunk = tree.skeleton.branches[0];
+  const sections = new Set(trunk.sections);
+  const forkDistance = trunk.sections[trunk.forkRing].distance;
+  const positions = tree.skeleton.branches
+    .filter(branch => sections.has(branch.attachment?.a) && branch.attachment.a !== branch.attachment.b)
+    .map(({ attachment: a }) => a.a.distance + (a.b.distance - a.a.distance) * a.f);
+  assert(positions.some(distance => distance < forkDistance - 0.1));
+  assert(positions.some(distance => distance > forkDistance + 0.1));
+});

@@ -4,7 +4,7 @@ import { applyAttachmentOffset } from './branch';
 // Compare the middle and tip of each blade against the full crown from
 // four horizontal directions. Counts retain information about both gaps
 // and dense sprays without rasterizing millions of LOD0 triangles.
-export function selectLeafSites(leaves, count, scale, paired, offsets) {
+export function selectLeafSites(leaves, count, scale, paired, offsets, clustered = false) {
   const resolution = Math.max(8, Math.min(64, Math.ceil(Math.sqrt(count))));
   const views = [[1, 0], [0, 1], [Math.SQRT1_2, Math.SQRT1_2], [Math.SQRT1_2, -Math.SQRT1_2]];
   const minX = views.map(() => Infinity), maxX = views.map(() => -Infinity);
@@ -67,6 +67,18 @@ export function selectLeafSites(leaves, count, scale, paired, offsets) {
     let quota = Math.min(4, count - k);
     const first = Math.floor(k * leaves.length / count);
     const end = Math.floor((k + quota) * leaves.length / count);
+    if (clustered && quota >= 4) {
+      let best = -1, bestScore = -Infinity;
+      for (let i = first; i + 3 < end; i++) {
+        if (![1, 2, 3].every(j => leaves[i].origin.equals(leaves[i + j].origin))) continue;
+        const value = score(i) + score(i + 1) + score(i + 2) + score(i + 3);
+        if (value > bestScore) { best = i; bestScore = value; }
+      }
+      if (best >= 0) {
+        for (let j = 0; j < 4; j++) keep(best + j);
+        quota -= 4;
+      }
+    }
     if (paired && quota >= 3) {
       let best = -1, bestScore = -Infinity;
       for (let i = first; i + 1 < end; i++) {

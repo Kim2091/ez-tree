@@ -294,7 +294,7 @@ export function meshFoliage(placements, options, stride, scale, detail, offsets,
 
   const origin = new THREE.Vector3();
   const selected = count > 0 && count < placements.length
-    ? selectLeafSites(placements, count, scale, (type === LeafType.Ash || type === LeafType.Maple), offsets) : null;
+    ? selectLeafSites(placements, count, scale, (type === LeafType.Ash || type === LeafType.Maple), offsets, type === LeafType.Ginkgo) : null;
   for (let k = 0; k < count; k++) {
     const i = selected ? selected[k] : k;
     const leaf = placements[i];
