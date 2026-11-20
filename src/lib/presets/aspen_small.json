@@ -84,9 +84,9 @@
     "type": "aspen",
     "textured": true,
     "angle": 58,
-    "count": 16,
+    "count": 32,
     "start": 0.06,
-    "size": 0.189,
+    "size": 0.105,
     "sizeVariance": 0.28,
     "tint": 16775371
   },

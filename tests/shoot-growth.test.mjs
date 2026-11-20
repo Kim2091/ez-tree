@@ -59,7 +59,10 @@ test('limb bends concentrate changes of heading without moving forks on the trun
     const starts = limbs.map(b => b.sections[0].origin.toArray());
     let straight = 0, pronounced = 0, reversals = 0;
     for (const { sections } of limbs) {
-      const pitches = sections.slice(1).map((s, i) => Math.asin(s.origin.clone().sub(sections[i].origin).normalize().y));
+      // Every other ring is an original growth knot; intermediate mesh rings
+      // round the path and should not change the scale of this measurement.
+      const knots = sections.filter((_, i) => i % 2 === 0);
+      const pitches = knots.slice(1).map((s, i) => Math.asin(s.origin.clone().sub(knots[i].origin).normalize().y));
       const turns = pitches.slice(1).map((p, i) => (p - pitches[i]) * 180 / Math.PI);
       straight += turns.filter(a => Math.abs(a) < 3).length;
       pronounced += turns.filter(a => Math.abs(a) > 12).length;
@@ -128,4 +131,27 @@ test('a terminal broad leaf opens toward the sky on a twisted shoot and stays at
   }
   assert(headings[0].equals(headings[2]));
   assert(headings[0].distanceTo(headings[1]) > 0.1);
+});
+
+test('intermediate branch rings soften turns while retaining growth knots', () => {
+  const tree = new Tree(); tree.loadPreset('Ginkgo');
+  const maxTurn = sections => {
+    let worst = 0;
+    for (let i = 1; i < sections.length - 1; i++) {
+      const incoming = sections[i].origin.clone().sub(sections[i - 1].origin).normalize();
+      const outgoing = sections[i + 1].origin.clone().sub(sections[i].origin).normalize();
+      worst = Math.max(worst, incoming.angleTo(outgoing));
+    }
+    return worst;
+  };
+  const candidates = tree.skeleton.branches.filter(b => b.attachment && b.sections.length >= 7 && b.sections.length % 2 === 1);
+  let checked = 0;
+  for (const { sections } of candidates) {
+    const growthKnots = sections.filter((_, i) => i % 2 === 0);
+    const originalTurn = maxTurn(growthKnots);
+    if (originalTurn < 0.1) continue;
+    assert(maxTurn(sections) < originalTurn);
+    checked++;
+  }
+  assert(checked > 50);
 });

@@ -84,9 +84,9 @@
     "type": "pine",
     "textured": true,
     "angle": 59,
-    "count": 19,
+    "count": 32,
     "start": 0.06,
-    "size": 0.48,
+    "size": 0.13,
     "sizeVariance": 0.28,
     "tint": 14214861
   },

@@ -84,9 +84,9 @@
                    "type":  "ginkgo",
                    "textured":  true,
                    "angle":  60,
-                   "count":  14,
+                   "count":  32,
                    "start":  0.06,
-                   "size":  0.25,
+                   "size":  0.14,
                    "sizeVariance":  0.28,
                    "tint":  16777180
                },

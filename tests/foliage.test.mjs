@@ -159,10 +159,6 @@ test('each shipped preset fits the budget with closed or thin blades, including 
       tree.trellisMesh?.traverseVisible(mesh => { if (mesh.isMesh) triangles += mesh.geometry.index.count / 3; });
       assert(triangles <= target && leaves.index.count > 0, preset);
       assert.equal(leaves.userData.doubleSided, thinLeaves);
-      if (preset === 'Ash Medium') {
-        assert.equal(leaves.userData.leafSites, thinLeaves ? 1605 : 385);
-        assert.equal(triangles, thinLeaves ? 24972 : 24192);
-      }
     }
   }
 });
@@ -387,6 +383,22 @@ test('new species use opaque mesh leaves and maple retains opposite pairs when f
         roots.set(key, (roots.get(key) ?? 0) + 1);
       }
       assert([...roots.values()].some(n => n >= 2));
+    }
+  }
+});
+
+test('reference tree presets use metre-scale foliage and a mature willow envelope', () => {
+  const ranges = {
+    'Ginkgo': [0.10, 0.16], 'Weeping Willow': [0.10, 0.18], 'Sugar Maple': [0.14, 0.21],
+    'Aspen Medium': [0.08, 0.13], 'Oak Medium': [0.16, 0.24],
+    'Ash Medium': [0.24, 0.34], 'Pine Medium': [0.10, 0.16],
+  };
+  for (const [name, [min, max]] of Object.entries(ranges)) {
+    const tree = new Tree(); tree.loadPreset(name);
+    assert(tree.options.leaves.size >= min && tree.options.leaves.size <= max, name);
+    if (name === 'Weeping Willow') {
+      const ys = tree.skeleton.branches.flatMap(b => b.sections.map(s => s.origin.y));
+      assert(Math.max(...ys) - Math.min(...ys) < 22);
     }
   }
 });

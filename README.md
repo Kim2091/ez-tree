@@ -17,6 +17,10 @@ Choose a tree preset, then open **Leaves** to adjust leaf shape, density, size, 
 
 The tree, shrub, and trellis presets use metre-scale dimensions. Ash carries pairs of compound leaves, oak grows larger spreading limbs, aspen has a slender pale trunk, and pine branches grow in whorls with lateral sprays of needles. The updated growth model changes the shape produced by earlier seeds. The same seed and settings reproduce a tree within this version.
 
+Preset foliage sizes use metres and include a modeled petiole or fascicle. Sizes are based on representative species: [ash](https://plants.ces.ncsu.edu/plants/fraxinus-americana/), [aspen](https://plants.ces.ncsu.edu/plants/populus-tremuloides/common-name/american-aspen/), [oak](https://plants.ces.ncsu.edu/plants/quercus-alba/), [pine](https://plants.ces.ncsu.edu/plants/pinus-strobus/common-name/northern-white-pine/), [ginkgo](https://plants.ces.ncsu.edu/plants/ginkgo-biloba/), [willow](https://web.uri.edu/wp-content/uploads/sites/2078/Salix-babylonica.pdf), and [sugar maple](https://plants.ces.ncsu.edu/plants/acer-saccharum/common-name/sugar-maple/). Actual plants vary. Smaller leaves need more geometry to fill a crown; the 25,000-triangle fit can appear sparse.
+
+Branch growth transitions are eased and intermediate rings round the curves. Child branches and leaves attach to the same refined path. Reducing rings for a low LOD may make curves more angular again. Existing seeds produce different trees after these changes.
+
 **Branches → Structure Variation** defaults to 0.75. It varies the gaps between forks and the length and girth of neighboring limbs. A broadleaf lateral can compete with the leader, while pine keeps its tiers.
 
 ![The same Ash Medium seed from the same camera with leaves hidden, at zero and default structure variation](docs/ash-branch-structure.jpg)

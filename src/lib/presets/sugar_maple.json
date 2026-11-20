@@ -1,4 +1,4 @@
-﻿{
+{
     "seed":  83041,
     "type":  "deciduous",
     "bark":  {
@@ -84,9 +84,9 @@
                    "type":  "maple",
                    "textured":  true,
                    "angle":  62,
-                   "count":  14,
+                   "count":  32,
                    "start":  0.06,
-                   "size":  0.38,
+                   "size":  0.18,
                    "sizeVariance":  0.28,
                    "tint":  16777215
                },

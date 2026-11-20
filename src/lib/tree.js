@@ -38,6 +38,50 @@ function sampleBranch(sections, t) {
   };
 }
 
+// Ease abrupt heading changes over adjacent growth sections. Work on the
+// skeleton before creating child branches and leaves, so every attachment
+// samples the same curved path at Full detail and reduced LODs. The endpoints
+// stay fixed, preserving the branch base and its terminal junction.
+function smoothBranchPath(sections) {
+  if (sections.length < 4) return;
+  const original = sections.map(section => section.origin.clone());
+  for (let i = 1; i < sections.length - 1; i++) {
+    const midpoint = original[i - 1].clone().add(original[i + 1]).multiplyScalar(0.5);
+    sections[i].origin.lerp(midpoint, 0.45);
+  }
+  for (let i = 1; i < sections.length; i++) {
+    const before = sections[i - 1].origin;
+    const after = sections[Math.min(i + 1, sections.length - 1)].origin;
+    const tangent = after.clone().sub(before);
+    if (tangent.lengthSq() < 1e-12) continue;
+    tangent.normalize();
+    const frame = new THREE.Quaternion().setFromEuler(sections[i].orientation);
+    const current = up.clone().applyQuaternion(frame);
+    const correction = new THREE.Quaternion().setFromUnitVectors(current, tangent);
+    sections[i].orientation.setFromQuaternion(correction.multiply(frame));
+  }
+}
+
+// Insert interpolated rings between the growth knots. The original knots
+// remain exact, including the fork junction; the added rings round the mesh
+// without changing the number of growth decisions or random samples.
+function refineBranchPath(sections) {
+  const refined = [];
+  for (let i = 0; i < sections.length - 1; i++) {
+    const a = sections[i], b = sections[i + 1];
+    const previous = sections[Math.max(0, i - 1)].origin;
+    const next = sections[Math.min(sections.length - 1, i + 2)].origin;
+    const origin = a.origin.clone().add(b.origin).multiplyScalar(0.5)
+      .addScaledVector(b.origin.clone().sub(previous).sub(next.clone().sub(a.origin)), 1 / 16);
+    const frame = new THREE.Quaternion().setFromEuler(a.orientation)
+      .slerp(new THREE.Quaternion().setFromEuler(b.orientation), 0.5);
+    refined.push(a, { origin, orientation: new THREE.Euler().setFromQuaternion(frame),
+      radius: (a.radius + b.radius) * 0.5, distance: (a.distance + b.distance) * 0.5 });
+  }
+  refined.push(sections.at(-1));
+  return refined;
+}
+
 function splitTerminalShoot(sections, leaves, firstLeaf, rng) {
   const total = sections.at(-1).distance;
   if (total < 0.18 || rng.random() > 0.55) return null;
@@ -53,12 +97,13 @@ function splitTerminalShoot(sections, leaves, firstLeaf, rng) {
   const radius = base.radius * rng.random(0.63, 0.45);
   const knots = [];
   const origin = base.origin.clone();
-  for (let k = 0; k < 3; k++) {
-    const dir = k === 0 ? axis : tipAxis;
+  for (let k = 0; k < 5; k++) {
+    const t = k / 4;
+    const dir = axis.clone().lerp(tipAxis, THREE.MathUtils.smoothstep(t, 0, 1)).normalize();
     const orientation = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir));
-    knots.push({ origin: origin.clone(), orientation, distance: length * k / 2,
-      radius: radius * [1, 0.57, 0.06][k] });
-    origin.addScaledVector(dir, length / 2);
+    knots.push({ origin: origin.clone(), orientation, distance: length * t,
+      radius: radius * (1 - 0.94 * t) });
+    origin.addScaledVector(dir, length / 4);
   }
   // Redirect alternate distal nodes as units. Opposite leaves remain paired
   // and the original shoot keeps its terminal bud.
@@ -651,6 +696,12 @@ export class Tree extends THREE.Group {
       }
 
       sectionOrientation.setFromQuaternion(qSection);
+    }
+
+    if (branch.level > 0) {
+      smoothBranchPath(sections);
+      sections = refineBranchPath(sections);
+      if (fork) fork.ring *= 2;
     }
 
     const chipRng = new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x85ebca6b));

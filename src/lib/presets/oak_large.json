@@ -84,9 +84,9 @@
     "type": "oak",
     "textured": true,
     "angle": 66,
-    "count": 17,
+    "count": 30,
     "start": 0.06,
-    "size": 0.341,
+    "size": 0.2,
     "sizeVariance": 0.28,
     "tint": 15790045
   },
