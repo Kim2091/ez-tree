@@ -84,6 +84,37 @@ function refineBranchPath(sections) {
   return refined;
 }
 
+// Low, tapered roots radiate from the basal flare and dip beneath the local
+// ground plane. They are real mesh branches, not a texture or shadow decal.
+function surfaceRootBranches(trunk, seed) {
+  const base = trunk.sections[0], radius = base.radius;
+  if (radius <= 0.02) return [];
+  const rng = new RNG(seed ^ 0x2f39a15b);
+  const count = 5 + Math.floor(rng.random() * 3), phase = rng.random(turn);
+  const roots = [];
+  for (let i = 0; i < count; i++) {
+    const angle = phase + turn * (i + rng.random(0.16, -0.16)) / count;
+    const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+    const sideways = new THREE.Vector3(-direction.z, 0, direction.x);
+    const length = radius * rng.random(3.6, 2.1);
+    const rootRadius = radius * rng.random(0.32, 0.22);
+    const bend = rng.random(0.18, -0.18);
+    const points = [0, 0.25, 0.55, 0.8, 1].map((t, j) => base.origin.clone()
+      .addScaledVector(direction, radius * 0.48 + length * t)
+      .addScaledVector(sideways, bend * length * t * t)
+      .addScaledVector(up, radius * [0.06, 0.10, 0.03, -0.10, -0.25][j]));
+    const sections = points.map((origin, j) => {
+      const before = points[Math.max(0, j - 1)], after = points[Math.min(points.length - 1, j + 1)];
+      const tangent = after.clone().sub(before).normalize();
+      return { origin, orientation: new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(up, tangent)),
+        radius: rootRadius * [1, 0.82, 0.55, 0.27, 0.02][j], distance: length * [0, 0.25, 0.55, 0.8, 1][j] };
+    });
+    roots.push({ sections, segmentCount: 6, baseRadius: rootRadius, trunk: false, surfaceRoot: true,
+      attachment: { a: base, b: base, f: 0 } });
+  }
+  return roots;
+}
+
 function splitTerminalShoot(sections, leaves, firstLeaf, rng, ground = -Infinity) {
   const total = sections.at(-1).distance;
   if (total < 0.18 || rng.random() > 0.55) return null;
@@ -448,6 +479,9 @@ export class Tree extends THREE.Group {
       this.#growBranch(branch, tipShoots);
     }
     for (const shoot of tipShoots) this.skeleton.branches.push(shoot);
+    if (this.options.branch.surfaceRoots) {
+      this.skeleton.branches.push(...surfaceRootBranches(this.skeleton.branches[0], this.options.seed));
+    }
   }
 
   /**
@@ -1045,6 +1079,9 @@ export class Tree extends THREE.Group {
     const flareHeight = Math.max(0.04, 1.4 * baseRadius);
     const flareStrength = skeletonBranch.trunk
       ? Math.min(1, 12 * baseRadius / Math.max(0.01, sections.at(-1).distance)) : 0;
+    const lateral = skeletonBranch.attachment && skeletonBranch.attachment.a !== skeletonBranch.attachment.b
+      && !skeletonBranch.fineTwig;
+    const collarHeight = Math.max(0.02, Math.min(baseRadius * 3, sections.at(-1).distance * 0.22));
 
     for (let k = 0, ring = 0; k < sampled.length; k++) {
       const section = sampled[k];
@@ -1053,8 +1090,12 @@ export class Tree extends THREE.Group {
       const before = sections[Math.max(0, ring - 1)];
       const after = sections[Math.min(ring + 1, sections.length - 1)];
       const run = after.distance - before.distance;
-      const taper = run !== 0 ? (before.radius - after.radius) / run : 0;
       const flare = flareStrength * Math.exp(-section.distance / flareHeight);
+      const collar = lateral ? 0.30 * Math.exp(-section.distance / collarHeight) : 0;
+      const flareBefore = flareStrength * Math.exp(-before.distance / flareHeight);
+      const flareAfter = flareStrength * Math.exp(-after.distance / flareHeight);
+      const collarBefore = lateral ? 0.30 * Math.exp(-before.distance / collarHeight) : 0;
+      const collarAfter = lateral ? 0.30 * Math.exp(-after.distance / collarHeight) : 0;
 
       // Create the segments that make up this section.
       let first;
@@ -1063,14 +1104,18 @@ export class Tree extends THREE.Group {
 
         // Create the segment vertex
         const lobe = 0.74 + 0.29 * Math.cos(5 * angle + phase) + 0.16 * Math.cos(3 * angle - phase);
-        const radius = section.radius * (1 + flare * lobe);
+        const radius = section.radius * (1 + flare * lobe + collar);
         const vertex = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle))
           .multiplyScalar(radius)
           .applyEuler(section.orientation)
           .add(section.origin).add(translation);
 
-        const dr = flare * (-1.45 * Math.sin(5 * angle + phase) - 0.48 * Math.sin(3 * angle - phase)) / (1 + flare * lobe);
-        const axial = taper * (1 + flare * lobe) + section.radius * flare * lobe / flareHeight;
+        const dr = flare * (-1.45 * Math.sin(5 * angle + phase) - 0.48 * Math.sin(3 * angle - phase)) / (1 + flare * lobe + collar);
+        // Match the actual neighboring rings rather than a continuous
+        // derivative: the mesh interpolates linearly between these rings.
+        const radiusBefore = before.radius * (1 + flareBefore * lobe + collarBefore);
+        const radiusAfter = after.radius * (1 + flareAfter * lobe + collarAfter);
+        const axial = run !== 0 ? (radiusBefore - radiusAfter) / run : 0;
         const normal = new THREE.Vector3(Math.cos(angle) + dr * Math.sin(angle),
           axial, Math.sin(angle) - dr * Math.cos(angle))
           .applyEuler(section.orientation)

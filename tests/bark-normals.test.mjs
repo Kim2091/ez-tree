@@ -26,6 +26,7 @@ test('scar faces wind outward where a wound approaches a ring seam', () => {
 test('recessed bark chips survive ring reduction and fit inside the tree budget', () => {
   const tree = new Tree();
   tree.loadPreset('Ash Medium');
+  tree.options.bark.damage = 0.25;
   const detail = tree.fitTriangleBudget(25000, { thinLeaves: true });
   const count = tree.skeleton.branches.filter(b => b.chip?.threshold < tree.options.bark.damage).length;
   assert(count > 0);
@@ -82,4 +83,26 @@ test('tapered side branches have outward normals perpendicular to the sloping ba
     first += sections.length * row;
   }
   assert.fail('Expected an inclined side branch');
+});
+
+test('lateral branches have a geometric collar that tapers away from the junction', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Small');
+  tree.options.bark.damage = 0;
+  tree.generate();
+  const position = tree.branchesMesh.geometry.attributes.position;
+  let first = 0;
+  for (const branch of tree.skeleton.branches) {
+    const row = branch.segmentCount + 1;
+    if (branch.attachment && branch.attachment.a !== branch.attachment.b && !branch.fineTwig) {
+      const { sections } = branch;
+      const start = new Vector3().fromBufferAttribute(position, first).distanceTo(sections[0].origin);
+      assert(Math.abs(start / sections[0].radius - 1.3) < 1e-5);
+      const last = new Vector3().fromBufferAttribute(position, first + (sections.length - 1) * row)
+        .distanceTo(sections.at(-1).origin);
+      assert(last / sections.at(-1).radius < 1.05);
+      return;
+    }
+    first += branch.sections.length * row;
+  }
+  assert.fail('Expected a lateral branch');
 });

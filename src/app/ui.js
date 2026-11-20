@@ -828,6 +828,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   branchSection.add(forkedCrown);
   controls.push({ control: forkedCrown, update: () => forkedCrown.setValue(tree.options.branch.forkedCrown) });
 
+  const surfaceRoots = createToggle('Surface Roots', tree.options.branch.surfaceRoots, value => {
+    tree.options.branch.surfaceRoots = value;
+    onChange();
+  });
+  branchSection.add(surfaceRoots);
+  controls.push({ control: surfaceRoots, update: () => surfaceRoots.setValue(tree.options.branch.surfaceRoots) });
+
   const stopAtGround = createToggle('Stop Branches at Ground', tree.options.branch.stopAtGround, value => {
     tree.options.branch.stopAtGround = value;
     onChange();

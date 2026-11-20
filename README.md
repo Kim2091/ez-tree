@@ -21,6 +21,8 @@ Preset foliage sizes use metres and include a modeled petiole or fascicle. Sizes
 
 Ash and sugar maple grow opposite pairs of young side shoots; oak retains alternate branching. Ginkgo grows leaf clusters on modeled woody spurs as described in the [Yale Nature Walk](https://naturewalk.yale.edu/trees/ginkgoaceae/ginkgo-biloba/ginkgo-41). Reduced LODs omit those tiny spurs, move their leaves to the parent branch, and retain clusters where possible. Branches stop above the local ground plane by default. Disable **Branches -> Stop Branches at Ground** when the root is above a drop-off or underground growth is intentional. These are procedural approximations; they do not reproduce every detail of a mature specimen.
 
+Lateral branches have a tapered geometric collar, and the base has a fluted trunk flare plus optional tapered surface roots. Disable **Branches -> Surface Roots** when they are not appropriate. These meshes still intersect at their junctions; they are not welded into a continuous surface.
+
 Branch growth transitions are eased and intermediate rings round the curves. Child branches and leaves attach to the same refined path. Reducing rings for a low LOD may make curves more angular again. Existing seeds produce different trees after these changes.
 
 **Branches → Structure Variation** defaults to 0.75. It varies the gaps between forks and the length and girth of neighboring limbs. A broadleaf lateral can compete with the leader, while pine keeps its tiers.
@@ -47,7 +49,7 @@ Closed oak, aspen, and ash blades have a waxier upper surface and a paler, rough
 
 Bark UVs follow branch length through every LOD. Bark normals follow the slope of each taper so narrowing twigs catch light along their length. To regenerate the supplied leaf and aspen bark maps, run `python scripts/bake_surfaces.py` with Pillow, NumPy, and SciPy installed.
 
-**Leaves → Leaf Damage** defaults to 0.18. A blade can have a bitten margin, torn tip, dry rolled edge, or a crease that bends the tip while keeping its veins intact. Ash damage affects one leaflet, and individual pine needles can dry, kink or break. **Bark → Bark Chipping** defaults to 0.25 and adds narrow splits, splinters, and broader shallow scrapes to the trunk and thicker branches. Freshly exposed wood is warmer, while older wounds fade toward gray. Set either control to zero for a clean surface. Increasing a control reveals more damage at repeatable sites. Leaf wear uses existing triangles, and the fitter reserves 14 triangles per bark wound.
+**Leaves → Leaf Damage** defaults to 0.05. A blade can have a bitten margin, torn tip, dry rolled edge, or a crease that bends the tip while keeping its veins intact. Ash damage affects one leaflet, and individual pine needles can dry, kink or break. **Bark → Bark Chipping** defaults to 0.04 and adds narrow splits, splinters, and broader shallow scrapes to the trunk and thicker branches. Freshly exposed wood is warmer, while older wounds fade toward gray. Set either control to zero for a clean surface. Increasing a control reveals more damage at repeatable sites. Leaf wear uses existing triangles, and the fitter reserves 14 triangles per bark wound.
 
 ![Close-ups of a rolled margin, a bent leaf tip, and splintered, split and scraped bark](docs/wear-varieties.jpg)
 
@@ -61,7 +63,7 @@ LOD0 defaults to **Full** for close-ups. LOD1 and LOD2 default to **Thin (denser
 
 The fitter keeps rings at branch bends and moves twig and leaf attachments with the simplified wood. When thinning foliage it compares projected leaf density with the full crown from four directions. Local quotas spread the retained leaves across shoots and reserve room for opposite ash pairs.
 
-With the default branch and damage settings, the shipped Ash Medium seed has 2,243,026 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 385 compound leaves in 24,696 total triangles. Thin blades keep 1,412 compound leaves in 25,000 total triangles. The fitter reserves a ring at a major fork whenever the branch has room for an interior ring. Both fits use one bark mesh and one foliage mesh. The older comparisons below were rendered with chipping, structure variation, limb bends, and forked crowns off.
+The triangle budget fitter accounts for branch rings, bark wounds, leaves, and any visible trellis. Lower targets preserve fewer leaf sites and may reduce branch and blade detail. The older comparisons below were rendered with chipping, structure variation, limb bends, and forked crowns off.
 
 ![Same Ash Medium tree and camera at a 25,000-triangle budget, with standard leaves on the left and thin leaves on the right](docs/ash-leaf-budget.jpg)
 

@@ -177,6 +177,7 @@ test('weeping willow shoots terminate above the local ground across seeds and LO
     tree.options.seed = seed;
     tree.generate({ leafScale: 0 });
     for (const branch of tree.skeleton.branches) {
+      if (branch.surfaceRoot) continue;
       for (const section of branch.sections) assert(section.origin.y >= -1e-8, `seed ${seed}`);
     }
     const g = tree.createGeometry({ sectionStride: 4, leafScale: 0 }).branches;
@@ -243,11 +244,29 @@ test('ground clearance applies across species and can be disabled', () => {
     tree.options.branch.stopAtGround = true;
     tree.loadPreset(name);
     for (const branch of tree.skeleton.branches) {
+      if (branch.surfaceRoot) continue;
       for (const section of branch.sections) assert(section.origin.y >= -1e-8, name);
     }
   }
   tree.loadPreset('Weeping Willow');
   tree.options.branch.stopAtGround = false;
   tree.generate({ leafScale: 0 });
-  assert(tree.skeleton.branches.some(branch => branch.sections.some(section => section.origin.y < 0)));
+  assert(tree.skeleton.branches.some(branch => !branch.surfaceRoot && branch.sections.some(section => section.origin.y < 0)));
+});
+
+test('surface roots taper into the ground and can be disabled', () => {
+  const tree = new Tree(); tree.options.leaves.count = 0; tree.generate();
+  const roots = tree.skeleton.branches.filter(branch => branch.surfaceRoot);
+  assert(roots.length >= 5 && roots.length <= 7);
+  for (const root of roots) {
+    assert(root.sections.at(-1).origin.y < 0);
+    assert(root.sections.at(-1).radius < root.sections[0].radius * 0.1);
+  }
+  const signature = roots.map(root => root.sections.map(section => section.origin.toArray()));
+  tree.generate();
+  assert.deepEqual(tree.skeleton.branches.filter(branch => branch.surfaceRoot)
+    .map(root => root.sections.map(section => section.origin.toArray())), signature);
+  tree.options.branch.surfaceRoots = false;
+  tree.generate();
+  assert(!tree.skeleton.branches.some(branch => branch.surfaceRoot));
 });

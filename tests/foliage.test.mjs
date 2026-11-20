@@ -323,10 +323,10 @@ test('simplified side shoots and terminal continuations stay joined to translate
   const p = tree.branchesMesh.geometry.attributes.position;
   const centers = new Map();
   let first = 0, displaced = 0;
-  for (const {sections, segmentCount, attachment, chip} of tree.skeleton.branches) {
+  for (const {sections, segmentCount, attachment, chip, surfaceRoot} of tree.skeleton.branches) {
     const lo = sections[0].origin, hi = sections.at(-1).origin;
     const shift = new Vector3();
-    if (attachment) {
+    if (attachment && !surfaceRoot) {
       const {a, b, f} = attachment;
       const expected = new Vector3().lerpVectors(centers.get(a), centers.get(b), f);
       const actual = new Vector3();

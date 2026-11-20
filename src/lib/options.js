@@ -8,7 +8,7 @@ export default class TreeOptions {
     // Clone the nested controls so edits to one seed never mutate the preset.
     this.bark = {
       ...structuredClone(oak.bark),
-      damage: 0.25,
+      damage: 0.04,
       maps: { color: null, ao: null, normal: null, roughness: null },
     };
     this.branch = structuredClone(oak.branch);
@@ -16,12 +16,13 @@ export default class TreeOptions {
     this.branch.limbBends = 0.85;
     this.branch.forkedCrown = true;
     this.branch.stopAtGround = true;
+    this.branch.surfaceRoots = true;
     this.leaves = {
       ...oak.leaves,
       maps: { color: null, normal: null, roughness: null, subsurface: null },
       subsurfaceStrength: 0.65,
       shootColorVariation: true,
-      damage: 0.18,
+      damage: 0.05,
       roundedNormals: true,
     };
 
