@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RNG from './rng';
 import { chipTrianglesAdded, cutBarkChip } from './bark-chip';
-import { Branch, applyAttachmentOffset, growthIntervals, limbBends } from './branch';
+import { Branch, applyAttachmentOffset, crownFork, growthIntervals, limbBends } from './branch';
 import { TreeType } from './enums';
 import { meshFoliage, trianglesPerLeaf } from './foliage';
 import TreeOptions from './options';
@@ -37,13 +37,57 @@ function sampleBranch(sections, t) {
   };
 }
 
+function splitTerminalShoot(sections, leaves, firstLeaf, rng) {
+  const total = sections.at(-1).distance;
+  if (total < 0.18 || rng.random() > 0.55) return null;
+  const start = rng.random(0.57, 0.30);
+  const base = sampleBranch(sections, start);
+  if (base.radius <= 0) return null;
+  const azimuth = rng.random(turn);
+  const angle = rng.random(0.87, 0.38);
+  const axis = new THREE.Vector3(Math.sin(angle) * Math.cos(azimuth), Math.cos(angle),
+    Math.sin(angle) * Math.sin(azimuth)).applyQuaternion(base.frame);
+  const tipAxis = axis.clone().addScaledVector(up, rng.random(0.44, 0.09)).normalize();
+  const length = total * (1 - start) * rng.random(1.32, 0.78);
+  const radius = base.radius * rng.random(0.63, 0.45);
+  const knots = [];
+  const origin = base.origin.clone();
+  for (let k = 0; k < 3; k++) {
+    const dir = k === 0 ? axis : tipAxis;
+    const orientation = new THREE.Euler().setFromQuaternion(new THREE.Quaternion().setFromUnitVectors(up, dir));
+    knots.push({ origin: origin.clone(), orientation, distance: length * k / 2,
+      radius: radius * [1, 0.57, 0.06][k] });
+    origin.addScaledVector(dir, length / 2);
+  }
+  // Redirect alternate distal nodes as units. Opposite leaves remain paired
+  // and the original shoot keeps its terminal bud.
+  let previous, move = false;
+  for (let i = firstLeaf; i < leaves.length; i++) {
+    const leaf = leaves[i], site = leaf.attachment;
+    if (site.a === site.b) continue;
+    const t = THREE.MathUtils.lerp(site.a.distance, site.b.distance, site.f) / total;
+    if (t <= start) continue;
+    if (previous !== t) {
+      move = !move;
+      previous = t;
+    }
+    if (!move) continue;
+    const next = sampleBranch(knots, (t - start) / (1 - start));
+    const rotation = next.frame.multiply(sampleBranch(sections, t).frame.invert());
+    leaf.orientation.setFromQuaternion(rotation.multiply(new THREE.Quaternion().setFromEuler(leaf.orientation)));
+    leaf.origin.copy(next.origin);
+    leaf.attachment = next.attachment;
+  }
+  return { sections: knots, attachment: base.attachment, baseRadius: radius, segmentCount: 3, trunk: false };
+}
+
 // Keep both ends, then split the interval with the largest centerline error
 // until it has the same number of rings as uniform sampling at this stride.
-function branchRings(sections, stride, offsets) {
+function branchRings(sections, stride, offsets, forkRing) {
   if (stride === 1 || sections.length < 3) return sections;
   const last = sections.length - 1;
   const spans = Math.ceil(last / stride);
-  const ids = [0, last];
+  const ids = forkRing && spans >= 2 ? [0, forkRing, last] : [0, last];
   const point = new THREE.Vector3();
   while (ids.length <= spans) {
     let maxError = -1, best = 0, insert = 0;
@@ -73,9 +117,9 @@ function branchShapeError(branches, stride, leafSize) {
   if (stride === 1) return 0;
   let error = 0, area = 0;
   const offsets = new Map();
-  for (const { sections, baseRadius } of branches) {
+  for (const { sections, baseRadius, forkRing } of branches) {
     offsets.clear();
-    branchRings(sections, stride, offsets);
+    branchRings(sections, stride, offsets, forkRing);
     const weight = sections.at(-1).distance * baseRadius;
     area += weight;
     const normalize = Math.max(1e-6, leafSize + baseRadius) * (sections.length - 1);
@@ -346,10 +390,12 @@ export class Tree extends THREE.Group {
       ),
     );
 
+    const tipShoots = [];
     while (this.branchQueue.length > 0) {
       const branch = this.branchQueue.shift();
-      this.#growBranch(branch);
+      this.#growBranch(branch, tipShoots);
     }
+    for (const shoot of tipShoots) this.skeleton.branches.push(shoot);
   }
 
   /**
@@ -441,17 +487,20 @@ export class Tree extends THREE.Group {
    * @param {Branch} branch
    * @returns
    */
-  #growBranch(branch) {
+  #growBranch(branch, tipShoots) {
     let sectionOrientation = branch.orientation.clone();
     let sectionOrigin = branch.origin.clone();
     const sectionLength = branch.length / branch.sectionCount;
     let bendX = 0, bendZ = 0;
     const variation = THREE.MathUtils.clamp(this.options.branch.structureVariation ?? 0, 0, 1);
-    const bends = branch.level > 0 ? THREE.MathUtils.clamp(this.options.branch.limbBends ?? 0, 0, 1) : 0;
+    const forked = this.options.branch.forkedCrown && this.options.type === TreeType.Deciduous && !this.options.trellis.enabled;
+    const forkRng = forked ? new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x632be5ab)) : null;
+    const fork = forked ? crownFork(branch, this.options.branch, forkRng) : null;
+    const bends = branch.level > 0 ? THREE.MathUtils.clamp(this.options.branch.limbBends ?? 0, 0, 1) * (branch.scaffold ? 0.52 : 1) : 0;
     const turns = bends ? limbBends(new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x94d049bb)),
       branch.attachment?.a === branch.attachment?.b, this.options.type === TreeType.Evergreen) : [];
     let leaderAxis, handoff, leaderBend;
-    if (variation && branch.level === 0 && this.options.type === TreeType.Deciduous) {
+    if (!fork && variation && branch.level === 0 && this.options.type === TreeType.Deciduous) {
       const rng = new RNG(this.options.seed ^ 0x6ac07385);
       const heading = rng.random(turn);
       leaderAxis = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
@@ -473,8 +522,13 @@ export class Tree extends THREE.Group {
       ) {
         sectionRadius = 0.001;
       } else if (this.options.type === TreeType.Deciduous) {
-        sectionRadius *=
-          1 - this.options.branch.taper[branch.level] * (i / branch.sectionCount);
+        const t = i / branch.sectionCount;
+        const taper = this.options.branch.taper[branch.level];
+        sectionRadius *= 1 - taper * t * (fork ? 0.67 : 1);
+        if (fork) {
+          const transfer = THREE.MathUtils.smoothstep(t, fork.at, Math.min(1, fork.at + 0.23));
+          sectionRadius *= 1 - transfer * (1 - fork.remaining);
+        }
       } else if (this.options.type === TreeType.Evergreen) {
         // Evergreens do not have a terminal branch so they have a taper of 1
         sectionRadius *= 1 - (i / branch.sectionCount);
@@ -511,6 +565,13 @@ export class Tree extends THREE.Group {
       );
 
       qSection.multiply(qTwist);
+      if (fork) {
+        // The parent yields in the opposite direction to the new stem.
+        const end = Math.min(1, fork.at + 0.30);
+        const step = THREE.MathUtils.smoothstep((i + 1) / branch.sectionCount, fork.at, end)
+          - THREE.MathUtils.smoothstep(i / branch.sectionCount, fork.at, end);
+        if (step) qSection.multiply(new THREE.Quaternion().setFromAxisAngle(fork.axis, -fork.deflection * step));
+      }
       if (leaderBend) {
         // A lateral bud takes over the leader partway up the trunk; the lower
         // bole stays upright and the upper stem carries the change of heading.
@@ -560,7 +621,10 @@ export class Tree extends THREE.Group {
         // A new bud responds to overhead light more strongly than the
         // established run it follows. Other force directions remain usable.
         const overhead = Math.max(0, target.y) * (this.options.branch.force.strength > 0 ? bends : 0);
-        const responseToLight = 1 - 0.94 * overhead * (1 - Math.min(1, activity));
+        let responseToLight = 1 - 0.94 * overhead * (1 - Math.min(1, activity));
+        if (fork && i / branch.sectionCount >= fork.at && this.options.branch.force.strength > 0) {
+          responseToLight *= 1 - 0.72 * Math.max(0, target.y);
+        }
         const step = responseToLight * this.options.branch.force.strength / Math.max(sectionRadius, 0.12);
         // Ease the response near the light direction so fine twigs retain
         // their own headings instead of all snapping upright.
@@ -594,6 +658,7 @@ export class Tree extends THREE.Group {
     } : null;
     this.skeleton.branches.push({
       chip,
+      forkRing: fork?.ring,
       sections,
       segmentCount: branch.segmentCount,
       baseRadius: branch.radius,
@@ -609,22 +674,16 @@ export class Tree extends THREE.Group {
       const endAttachment = { a: lastSection, b: lastSection, f: 0 };
 
       if (branch.level < this.options.branch.levels) {
-        this.branchQueue.push(
-          new Branch(
-            lastSection.origin,
-            lastSection.orientation,
-            this.options.branch.length[branch.level + 1] * branch.vigor
-              * (branch.level === 0 ? (this.options.branch.leaderScale ?? 1) : 1),
-            lastSection.radius,
-            branch.level + 1,
-            // Section count and segment count must be same as parent branch
-            // since the child branch is growing from the end of the parent branch
-            branch.sectionCount,
-            branch.segmentCount,
-            branch.vigor,
-            endAttachment,
-          ),
+        const extension = new Branch(
+          lastSection.origin, lastSection.orientation,
+          this.options.branch.length[branch.level + 1] * branch.vigor
+            * (branch.level === 0 ? (this.options.branch.leaderScale ?? 1) : 1),
+          lastSection.radius, branch.level + 1,
+          // Match the last ring of the parent at this continuation.
+          branch.sectionCount, branch.segmentCount, branch.vigor, endAttachment,
         );
+        extension.scaffold = Boolean(fork || branch.scaffold);
+        this.branchQueue.push(extension);
       } else {
         let orientation = lastSection.orientation;
         if (this.options.leaves.type !== 'pine') {
@@ -654,7 +713,7 @@ export class Tree extends THREE.Group {
         this.options.type === TreeType.Evergreen && branch.level > 0
           ? Math.round(count * Math.min(1, 0.24 + branch.vigor)) : count,
         branch.level + 1,
-        sections, branch.vigor);
+        sections, branch.vigor, fork);
     }
 
     if (firstLeaf < this.skeleton.leaves.length) {
@@ -669,6 +728,10 @@ export class Tree extends THREE.Group {
         leaf.pigment = 0.80 * shoot - 0.65 + (0.28 + 0.55 * shoot) * tip;
       }
     }
+    if (forked && branch.level > 0 && branch.level === this.options.branch.levels) {
+      const twig = splitTerminalShoot(sections, this.skeleton.leaves, firstLeaf, forkRng);
+      if (twig) tipShoots.push(twig);
+    }
   }
 
   /**
@@ -682,7 +745,7 @@ export class Tree extends THREE.Group {
    * }[]} sections The parent branch's sections
    * @returns
    */
-  generateChildBranches(count, level, sections, parentVigor = 1) {
+  generateChildBranches(count, level, sections, parentVigor = 1, fork = null) {
     const opt = this.options.branch;
     const evergreen = this.options.type === TreeType.Evergreen;
     const variation = THREE.MathUtils.clamp(opt.structureVariation ?? 0, 0, 1);
@@ -711,7 +774,14 @@ export class Tree extends THREE.Group {
         slot = THREE.MathUtils.lerp(bounds[n], bounds[n + 1], local);
         angle += variation * growth.random(tiered ? 0.34 : 0.70, tiered ? -0.34 : -0.70);
       }
-      const t = start + (1 - start) * slot;
+      const coLeader = fork && i === dominant;
+      let t = start + (1 - start) * slot;
+      if (coLeader) {
+        t = fork.at;
+        angle = fork.azimuth;
+      } else if (fork && level === 1) {
+        t = fork.at + (1 - fork.at) * (0.10 + 0.90 * slot);
+      }
       const { origin, frame, radius, attachment } = sampleBranch(sections, t);
       const crownAngle = evergreen && level === 1 ? 1.08 - 0.63 * slot * slot : 1;
       // One broadleaf lateral can compete with the leader. Its siblings
@@ -720,7 +790,8 @@ export class Tree extends THREE.Group {
       const exposure = Math.cos(angle - openSide);
       const reach = competitor ? 0.42 : 0.25 * exposure + growth.random(0.17, -0.20);
       const forkAngle = competitor ? -0.34 : growth.random(0.39, -0.16);
-      const opening = THREE.MathUtils.degToRad(opt.angle[level] * crownAngle * this.rng.random(1.14, 0.86) * (1 + variation * forkAngle));
+      const opening = THREE.MathUtils.degToRad(opt.angle[level] * crownAngle * this.rng.random(1.14, 0.86)
+        * (coLeader ? 0.55 : 1 + variation * forkAngle));
       let direction = new THREE.Vector3(Math.sin(angle) * Math.sin(opening), Math.cos(opening),
         Math.cos(angle) * Math.sin(opening)).applyQuaternion(frame);
       if (evergreen && level > 1) {
@@ -736,9 +807,13 @@ export class Tree extends THREE.Group {
       const envelope = evergreen && level === 1 ? Math.pow(1 - t, 0.65)
         : 0.72 + 0.34 * Math.sin(Math.PI * slot);
       const vigor = parentVigor * envelope * this.rng.random(1.16, 0.84) * (1 + variation * reach);
-      const child = new Branch(origin, orientation, opt.length[level] * vigor,
-        radius * Math.min(Math.max(0.94, opt.radius[level]), opt.radius[level] * (1 + variation * reach * 0.75)), level,
+      const radiusRatio = coLeader ? fork.radiusShare :
+        Math.min(Math.max(0.94, opt.radius[level]), opt.radius[level] * (1 + variation * reach * 0.75));
+      const remainingLength = coLeader ? 0.76 * sections.at(-1).distance * (1 - t) : 0;
+      const child = new Branch(origin, orientation, opt.length[level] * vigor + remainingLength,
+        radius * radiusRatio, level,
         opt.sections[level], opt.segments[level], vigor, attachment);
+      child.scaffold = Boolean(coLeader);
       child.sweep = variation * growth.random(0.98, 0.09) * (competitor ? 0.35 : 1);
       this.branchQueue.push(child);
     }
@@ -819,7 +894,7 @@ export class Tree extends THREE.Group {
       Math.round(turn * baseRadius * this.options.bark.textureScale.x),
     );
 
-    const sampled = branchRings(sections, sectionStride, offsets);
+    const sampled = branchRings(sections, sectionStride, offsets, skeletonBranch.forkRing);
     const translation = applyAttachmentOffset(new THREE.Vector3(), skeletonBranch.attachment, offsets);
     if (translation.lengthSq() > 0) {
       for (const section of sections) {

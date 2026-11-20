@@ -3,6 +3,51 @@ import test from 'node:test';
 import { Vector3 } from 'three';
 import { LeafType, Tree } from '../build/ez-tree.es.js';
 
+test('broadleaf scaffolds fork again, hold their junction at LOD and carry fine leaf-bearing twigs', () => {
+  const tree = new Tree();
+  tree.loadPreset('Ash Medium');
+  tree.options.branch.forkedCrown = false;
+  tree.generate({ leafScale: 0 });
+  const oldCount = tree.skeleton.branches.length, leafCount = tree.skeleton.leaves.length;
+  tree.options.branch.forkedCrown = true;
+  tree.generate({ leafScale: 0 });
+  const { branches, leaves } = tree.skeleton;
+  const trunk = branches[0], junction = trunk.sections[trunk.forkRing];
+  const primary = branches.find(b => b.attachment?.a === junction && b.attachment.f === 0);
+  assert(primary.baseRadius > 0.63 * junction.radius);
+  assert(primary.forkRing > 0 && trunk.sections[trunk.forkRing + 2].radius < junction.radius);
+  const full = tree.branchesMesh.geometry.attributes.position;
+  const low = tree.createGeometry({ sectionStride: trunk.sections.length - 2, leafScale: 0 }).branches.attributes.position;
+  for (let j = 0; j <= trunk.segmentCount; j++) {
+    const row = trunk.segmentCount + 1;
+    assert(new Vector3().fromBufferAttribute(full, trunk.forkRing * row + j)
+      .equals(new Vector3().fromBufferAttribute(low, row + j)));
+  }
+  assert.equal(leaves.length, leafCount);
+  assert(branches.length > oldCount);
+  const twigKnots = new Set(branches.slice(oldCount).flatMap(b => b.sections));
+  const mounted = leaves.filter(l => twigKnots.has(l.attachment.a));
+  assert(mounted.length > 0 && mounted.length % 2 === 0);
+  for (let i = 0; i < mounted.length; i += 2) {
+    const { a, b, f } = mounted[i].attachment;
+    assert(mounted[i].origin.equals(new Vector3().lerpVectors(a.origin, b.origin, f)));
+    assert(mounted[i].origin.equals(mounted[i + 1].origin));
+  }
+});
+
+test('pine whorls and trained trellises keep their own growth pattern', () => {
+  const tree = new Tree();
+  for (const preset of ['Pine Small', 'Trellis']) {
+    tree.loadPreset(preset);
+    tree.options.branch.forkedCrown = false;
+    tree.generate({ leafScale: 0 });
+    const clean = tree.branchesMesh.geometry.attributes.position.array;
+    tree.options.branch.forkedCrown = true;
+    tree.generate({ leafScale: 0 });
+    assert.deepEqual(tree.branchesMesh.geometry.attributes.position.array, clean);
+  }
+});
+
 test('limb bends concentrate changes of heading without moving forks on the trunk', () => {
   const tree = new Tree();
   tree.loadPreset('Ash Medium');

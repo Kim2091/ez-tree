@@ -1,5 +1,27 @@
 import * as THREE from 'three';
 
+// Reserve an existing lateral at a real ring. Both stems retain a share
+// of the cross-sectional area carried into that ring.
+export function crownFork(branch, options, rng) {
+  const level = branch.level;
+  if (level >= options.levels || options.children[level] < 2 || branch.sectionCount < 3 ||
+    branch.length <= 2 * branch.radius || branch.radius <= 0 ||
+    options.radius[level + 1] <= 0 || options.length[level + 1] <= 0) return null;
+  if (level > 0 && !branch.scaffold && (level > 1 || branch.radius < 0.27 * options.radius[0])) return null;
+  const start = options.start[level + 1];
+  const fraction = start + (1 - start) * (level === 0 ? rng.random(0.48, 0.23) : rng.random(0.66, 0.34));
+  const ring = Math.max(1, Math.ceil(start * branch.sectionCount), Math.round(fraction * branch.sectionCount));
+  if (ring >= branch.sectionCount) return null;
+  const azimuth = rng.random(Math.PI * 2);
+  const radiusShare = Math.min(0.81, options.radius[level + 1] * rng.random(1.46, 1.27));
+  return {
+    ring, at: ring / branch.sectionCount, azimuth, radiusShare,
+    remaining: Math.sqrt(1 - radiusShare * radiusShare),
+    axis: new THREE.Vector3(Math.cos(azimuth), 0, -Math.sin(azimuth)),
+    deflection: THREE.MathUtils.degToRad(options.angle[level + 1]) * rng.random(0.62, 0.37) * Math.min(1, radiusShare / 0.55),
+  };
+}
+
 // A bud can carry a limb on in a different direction after a stretch of
 // straight wood. Store changes of heading in radians at fractions of its
 // length, so the same turn can span one ring or several.

@@ -21,6 +21,10 @@ The tree, shrub, and trellis presets use metre-scale dimensions. Ash carries pai
 
 ![The same Ash Medium seed from the same camera with leaves hidden, at zero and default structure variation](docs/ash-branch-structure.jpg)
 
+**Branches → Forked Broadleaf Crown** is on by default for free-growing deciduous trees. The trunk divides into two substantial stems. The continuing stem tapers and turns away from its partner, and the larger limbs can divide again. Some outer shoots also carry a finer side twig with its own leaves. Disable the control to recover the previous crown for a seed. Pine whorls and trellis-trained trees use their own branching patterns.
+
+![Ash and oak with foliage hidden. Each row compares the same seed and camera with the forked crown off and on.](docs/broadleaf-forks.jpg)
+
 **Branches → Limb Bends** controls the path each limb takes between forks. At the default of 0.85, a shoot can extend straight, dip or turn sideways, then continue along that heading. Some tips turn back toward the light. At zero, branches follow the previous smooth curves. The comparison shows the same seed with identical fork placement on the trunk and isolates its thickest lateral limb in the bottom row.
 
 ![Ash Medium with smooth curves and localized bends, shown as a whole crown and as the same isolated limb](docs/ash-limb-bends.jpg)
@@ -51,7 +55,7 @@ LOD0 defaults to **Full** for close-ups. LOD1 and LOD2 default to **Thin (denser
 
 The fitter keeps rings at branch bends and moves twig and leaf attachments with the simplified wood. When thinning foliage it compares projected leaf density with the full crown from four directions. Local quotas spread the retained leaves across shoots and reserve room for opposite ash pairs.
 
-With the default branch and damage settings, the shipped Ash Medium seed has 2,241,046 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 357 compound leaves in 24,202 total triangles. Thin blades keep 1,492 compound leaves in 24,970 total triangles. The fitter can spend more of the budget on wood when it needs extra rings to retain a bend. Both fits use one bark mesh and one foliage mesh. The comparisons below were rendered with chipping, structure variation, and limb bends off.
+With the default branch and damage settings, the shipped Ash Medium seed has 2,243,026 triangles at full detail. At a 25,000-triangle target, the standard fit keeps 385 compound leaves in 24,696 total triangles. Thin blades keep 1,412 compound leaves in 25,000 total triangles. The fitter reserves a ring at a major fork whenever the branch has room for an interior ring. Both fits use one bark mesh and one foliage mesh. The older comparisons below were rendered with chipping, structure variation, limb bends, and forked crowns off.
 
 ![Same Ash Medium tree and camera at a 25,000-triangle budget, with standard leaves on the left and thin leaves on the right](docs/ash-leaf-budget.jpg)
 

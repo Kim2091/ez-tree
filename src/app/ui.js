@@ -821,6 +821,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   branchSection.add(structure);
   controls.push({ control: structure, update: () => structure.setValue(tree.options.branch.structureVariation) });
 
+  const forkedCrown = createToggle('Forked Broadleaf Crown', tree.options.branch.forkedCrown, value => {
+    tree.options.branch.forkedCrown = value;
+    onChange();
+  });
+  branchSection.add(forkedCrown);
+  controls.push({ control: forkedCrown, update: () => forkedCrown.setValue(tree.options.branch.forkedCrown) });
+
   const limbBends = createSlider('Limb Bends', tree.options.branch.limbBends, 0, 1, 0.01, value => {
     tree.options.branch.limbBends = value;
     onChange();
