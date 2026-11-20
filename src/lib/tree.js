@@ -1105,9 +1105,9 @@ export class Tree extends THREE.Group {
     // so tapered sections share a wrap count and don't twist the texture
     // longitudinally.
     const photoBark = this.options.bark.type === 'PhotoSmooth' || this.options.bark.type === 'PhotoFurrowed';
-    const wrapsX = photoBark ? 1 : Math.max(
+    const wrapsX = Math.max(
       1,
-      Math.round(turn * baseRadius * this.options.bark.textureScale.x),
+      Math.round(turn * baseRadius * this.options.bark.textureScale.x * (photoBark ? 1.5 : 1)),
     );
 
     const sampled = branchRings(sections, sectionStride, offsets, skeletonBranch.forkRing);
@@ -1276,6 +1276,7 @@ export class Tree extends THREE.Group {
       if (maps.color) mat.map = apply(maps.color);
       if (maps.ao) mat.aoMap = apply(maps.ao);
       if (maps.normal) mat.normalMap = apply(maps.normal);
+      if (maps.height) mat.barkHeightMap = apply(maps.height);
       if (maps.roughness) {
         mat.roughnessMap = apply(maps.roughness);
         // Point metalnessMap at the same texture: metalness stays 0 because

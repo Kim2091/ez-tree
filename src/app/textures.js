@@ -27,10 +27,9 @@ const ready = new WeakMap();
 function surfaceMaps(base, species) {
   if (sets.has(base)) return sets.get(base);
   const photoBark = /\/Photo(?:Smooth|Furrowed)_1K-JPG\//.test(base);
-  // These photo-derived textures provide color only. Explicit nulls clear
-  // the previous bark's unrelated normal and roughness maps on selection.
-  const maps = { normal: null, roughness: null };
-  const channels = photoBark ? [['color', 'Color.png']]
+  // Explicit null clears the photo height map when selecting another bark.
+  const maps = { normal: null, roughness: null, height: null };
+  const channels = photoBark ? [['color', 'Color.png'], ['normal', 'NormalGL.png'], ['roughness', 'Roughness.png'], ['height', 'Height.png']]
     : [['color', 'Color.jpg'], ['normal', 'NormalGL.jpg'], ['roughness', 'Roughness.jpg']];
   if (species) channels.push(['subsurface', 'Subsurface.png']);
   for (const [channel, file] of channels) {
@@ -50,7 +49,7 @@ function surfaceMaps(base, species) {
       texture.userData.uvAspect = base.includes('PhotoSmooth') ? 4328 / 2836 : 4328 / 2486;
     }
     if (sided) texture.channel = 1;
-    if (channel === 'color' || channel === 'roughness') texture.userData.mimeType = file.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    texture.userData.mimeType = file.endsWith('.png') ? 'image/png' : 'image/jpeg';
     texture.anisotropy = 4;
     maps[channel] = texture;
     ready.set(texture, loaded);
@@ -67,7 +66,7 @@ export async function prepareExportMaterial(material) {
     await ready.get(scattering.map);
     if (!scattering.map.image) scattering.map = null;
   }
-  for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap']) {
+  for (const key of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'barkHeightMap']) {
     const map = material[key];
     if (!map) continue;
     await ready.get(map);

@@ -1300,6 +1300,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     for (const mesh of [tree.branchesMesh, tree.leavesMesh]) {
       const snapshot = new THREE.Mesh(mesh.geometry, mesh.material.clone());
       if (mesh.material.leafScattering) snapshot.material.leafScattering = { ...mesh.material.leafScattering };
+      snapshot.material.barkHeightMap = mesh.material.barkHeightMap;
       snapshot.name = mesh.material.name === 'leaves' ? 'Leaves' : 'Branches';
       group.add(snapshot);
     }
@@ -1383,6 +1384,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     const textures = await collectTextures(model, files);
     files[`tree_LOD${level}.usd`] = new Uint8Array(await exportUSD(model, textures).arrayBuffer());
     download(new Blob([zipSync(files, { level: 1 })]), `tree_LOD${level}_usd.zip`);
+  });
+  addExport('Bark Maps (ZIP)', async (model, level, setStatus) => {
+    setStatus('Packing bark maps...');
+    const files = {};
+    await collectTextures({ children: [model.children[0]] }, files);
+    if (!Object.keys(files).length) throw new Error('No bark maps are available.');
+    download(new Blob([zipSync(files, { level: 1 })], { type: 'application/zip' }), 'bark_maps.zip');
   });
   addExport('GLB LODs (ZIP)', (model, level, status, settings) => exportLevels(model, 'glb', status, settings), true);
   addExport('USD LODs + Textures (ZIP)', (model, level, status, settings) => exportLevels(model, 'usd', status, settings), true);

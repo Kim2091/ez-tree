@@ -199,7 +199,7 @@ export async function collectTextures(root, files) {
     const maps = {};
     for (const [channel, texture] of [
       ['color', mesh.material.map], ['roughness', mesh.material.roughnessMap],
-      ['normal', mesh.material.normalMap], ['subsurface', mesh.material.leafScattering?.map],
+      ['normal', mesh.material.normalMap], ['height', mesh.material.barkHeightMap], ['subsurface', mesh.material.leafScattering?.map],
     ]) {
       const src = texture?.image?.src;
       if (!src) continue;

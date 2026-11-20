@@ -117,7 +117,7 @@ test('bark UV phases vary between limbs and reproduce for the same seed', () => 
   assert.deepEqual(tree.branchesMesh.geometry.attributes.uv.array, uv);
 });
 
-test('photo bark UVs wrap once around the trunk and survive ring reduction', () => {
+test('photo bark UVs scale with trunk circumference and survive ring reduction', () => {
   const tree = new Tree(); tree.options.branch.levels = 0;
   tree.options.branch.surfaceRoots = false; tree.options.bark.damage = 0;
   tree.options.bark.type = 'PhotoSmooth';
@@ -134,7 +134,7 @@ test('photo bark UVs wrap once around the trunk and survive ring reduction', () 
     assert.equal(full.getY(first), full.getY(last));
   }
   assert.equal(full.getX(0), 0);
-  assert.equal(full.getX(row - 1), 1);
+  assert.equal(full.getX(row - 1), Math.max(1, Math.round(2 * Math.PI * tree.skeleton.branches[0].baseRadius * 1.5)));
   assert.equal(full.getX(row), 0);
   for (let i = 0; i < reduced.count; i += row) {
     const match = Array.from({ length: rings }, (_, j) => j * row)

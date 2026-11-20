@@ -481,7 +481,7 @@ test('instanced GLB writes the glTF GPU instancing extension and per-instance co
   }
 });
 
-test('photo-derived bark loads its PNG and clears unrelated maps', async () => {
+test('photo-derived bark loads its surface maps and clears height on switching bark', async () => {
   const original = TextureLoader.prototype.load, requests = [];
   TextureLoader.prototype.load = function (url, onLoad) {
     requests.push(url);
@@ -499,8 +499,10 @@ test('photo-derived bark loads its PNG and clears unrelated maps', async () => {
     assert(requests.includes('/textures/bark/PhotoSmooth_1K-JPG/PhotoSmooth_1K-JPG_Color.png'));
     assert.equal(tree.options.bark.maps.color.userData.mimeType, 'image/png');
     assert.equal(tree.options.bark.maps.color.userData.uvAspect, 4328 / 2836);
-    assert.equal(tree.options.bark.maps.normal, null);
-    assert.equal(tree.options.bark.maps.roughness, null);
+    for (const channel of ['normal', 'roughness', 'height']) assert(tree.options.bark.maps[channel]);
+    tree.options.bark.type = 'Bark001';
+    applyTreeTextures(tree);
+    assert.equal(tree.options.bark.maps.height, null);
     await Promise.resolve();
   } finally {
     TextureLoader.prototype.load = original;

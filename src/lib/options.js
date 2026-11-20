@@ -9,7 +9,7 @@ export default class TreeOptions {
     this.bark = {
       ...structuredClone(oak.bark),
       damage: 0.04,
-      maps: { color: null, ao: null, normal: null, roughness: null },
+      maps: { color: null, ao: null, normal: null, roughness: null, height: null },
     };
     this.branch = structuredClone(oak.branch);
     this.branch.structureVariation = 0.75;
