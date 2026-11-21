@@ -32,6 +32,42 @@ function uprightStrength(options) {
   return THREE.MathUtils.clamp(options.branch.uprightGrowth ?? 1, 0, 1);
 }
 
+// Keep the bole centered over its base, including at the main fork. Remove
+// accumulated sideways drift while retaining a small amount of local curve.
+// This happens before growing children, so every fork and leaf uses the same
+// corrected path. Lowering upward growth deliberately permits leaning trunks.
+function centerTrunk(sections, forkRing, strength) {
+  if (strength <= 0 || sections.length < 2) return;
+  const original = sections.map(section => section.origin.clone());
+  const last = sections.length - 1;
+  const stops = forkRing > 0 && forkRing < last ? [0, forkRing, last] : [0, last];
+  for (let span = 0; span < stops.length - 1; span++) {
+    const start = stops[span], end = stops[span + 1];
+    for (let i = start; i <= end; i++) {
+      const t = (i - start) / (end - start);
+      const x = THREE.MathUtils.lerp(original[start].x, original[end].x, t);
+      const z = THREE.MathUtils.lerp(original[start].z, original[end].z, t);
+      const centeredX = original[0].x + 0.2 * (original[i].x - x);
+      const centeredZ = original[0].z + 0.2 * (original[i].z - z);
+      sections[i].origin.x = THREE.MathUtils.lerp(original[i].x, centeredX, strength);
+      sections[i].origin.z = THREE.MathUtils.lerp(original[i].z, centeredZ, strength);
+    }
+  }
+  let distance = 0;
+  for (let i = 0; i < sections.length; i++) {
+    const a = Math.min(i, last - 1), b = a + 1;
+    const before = original[b].clone().sub(original[a]).normalize();
+    const after = sections[b].origin.clone().sub(sections[a].origin).normalize();
+    if (before.lengthSq() > 1e-12 && after.lengthSq() > 1e-12) {
+      const q = new THREE.Quaternion().setFromEuler(sections[i].orientation);
+      q.premultiply(new THREE.Quaternion().setFromUnitVectors(before, after));
+      sections[i].orientation.setFromQuaternion(q);
+    }
+    if (i) distance += sections[i].origin.distanceTo(sections[i - 1].origin);
+    sections[i].distance = distance;
+  }
+}
+
 // Reshape the growth skeleton around the root, then rebuild the wood and
 // leaves at their original cross-section and blade size. This changes branch
 // lengths and directions without stretching already-meshed foliage or bark.
@@ -885,15 +921,13 @@ export class Tree extends THREE.Group {
         const direction = up.clone().applyQuaternion(qSection);
         const lifted = liftDirection(direction.clone(), branch.level <= 2 ? 0.15 : -0.08, uprightStrength(this.options));
         qSection.premultiply(new THREE.Quaternion().setFromUnitVectors(direction, lifted));
-      } else if (oak) {
-        // Trunk curves, fork deflection, and random drift can add together.
-        // Bound their combined tilt so ordinary seeds keep an upright bole.
-        const direction = up.clone().applyQuaternion(qSection);
-        const lifted = liftDirection(direction.clone(), Math.cos(THREE.MathUtils.degToRad(10)), uprightStrength(this.options));
-        qSection.premultiply(new THREE.Quaternion().setFromUnitVectors(direction, lifted));
       }
 
       sectionOrientation.setFromQuaternion(qSection);
+    }
+
+    if (branch.level === 0 && !this.options.trellis.enabled && this.options.branch.length[0] >= 0.75) {
+      centerTrunk(sections, fork?.ring, THREE.MathUtils.clamp(this.options.branch.uprightGrowth ?? 1, 0, 1));
     }
 
     // Branchlets stop at the local ground plane instead of continuing

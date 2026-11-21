@@ -78,10 +78,10 @@ test('height-limited oak keeps its upright trunk and attached limbs', () => {
   tree.options.bounds.growthScale = { x: 1, y: 0.25, z: 1 };
   tree.generate({ leafDetail: 'micro' });
   const trunk = tree.skeleton.branches[0], base = trunk.sections[0].origin;
-  for (const section of trunk.sections.slice(1)) {
-    const delta = section.origin.clone().sub(base);
-    const angle = Math.atan2(Math.hypot(delta.x, delta.z), delta.y) * 180 / Math.PI;
-    assert(angle <= 10.01, `${angle} degrees`);
+  for (const i of [trunk.forkRing, trunk.sections.length - 1]) {
+    if (i === undefined) continue;
+    const tip = trunk.sections[i].origin;
+    assert(Math.hypot(tip.x - base.x, tip.z - base.z) < 1e-8);
   }
   for (const branch of tree.skeleton.branches) {
     if (!branch.attachment || branch.surfaceRoot) continue;

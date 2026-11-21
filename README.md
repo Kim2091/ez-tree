@@ -29,7 +29,7 @@ Branch growth transitions are eased and intermediate rings round the curves. Chi
 
 **Branches → Structure Variation** defaults to 0.75. It varies the gaps between forks and the length and girth of neighboring limbs. A broadleaf lateral can compete with the leader, while pine keeps its tiers.
 
-Oak presets use a more balanced crown with shorter primary limbs, several rising scaffold limbs, finer secondary branching, and a gently irregular trunk that remains curved through its main fork. **Branches → Trunk Curve** controls the trunk bend. With default upward growth, trunk and fork turns are limited together to prevent excessive lean; reducing upward growth allows more lean. See the [upright oak comparison](docs/oak-upright-comparison.png) for two seeds; individual oaks vary considerably.
+Oak presets use shorter primary limbs, several rising scaffold limbs, and finer secondary branching. At the default upward-growth setting, tree trunks are centered above their bases, including at the main fork, with slight local irregularity. **Branches → Trunk Curve** controls the oak's local bend; reducing upward growth permits an overall lean. The [earlier oak comparison](docs/oak-upright-comparison.png) illustrates the preceding change; individual oaks vary considerably.
 
 ![The same Ash Medium seed from the same camera with leaves hidden, at zero and default structure variation](docs/ash-branch-structure.jpg)
 
