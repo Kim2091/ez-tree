@@ -140,6 +140,25 @@ test('limb bends concentrate changes of heading without moving forks on the trun
   assert.deepEqual(measure(0.85), bent);
 });
 
+test('low oak limbs turn upward along their length', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Medium');
+  tree.options.leaves.count = 0;
+  let lowLimbs = 0;
+  for (const seed of [3, 19, 42, 60, 85, 35729, 23399]) {
+    tree.options.seed = seed; tree.generate({ leafScale: 0 });
+    for (const branch of tree.skeleton.branches.filter(b => b.level === 1 && b.sections.at(-1).distance > 2)) {
+      const s = branch.sections;
+      const initial = s[2].origin.clone().sub(s[0].origin).normalize().y;
+      const tip = s.at(-1).origin.clone().sub(s.at(-3).origin).normalize().y;
+      if (initial < 0.4) {
+        lowLimbs++;
+        assert(tip > 0.48 && tip > initial + 0.12, `seed ${seed}: ${initial} to ${tip}`);
+      }
+    }
+  }
+  assert(lowLimbs >= 5);
+});
+
 test('the crown has uneven fork spacing, unequal scaffolds and repeatable growth', () => {
   const tree = new Tree();
   tree.options.leaves.count = 0;

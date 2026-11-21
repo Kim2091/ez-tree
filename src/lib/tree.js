@@ -919,7 +919,17 @@ export class Tree extends THREE.Group {
 
       if (branch.level > 0) {
         const direction = up.clone().applyQuaternion(qSection);
-        const lifted = liftDirection(direction.clone(), branch.level <= 2 ? 0.15 : -0.08, uprightStrength(this.options));
+        let minimumY = branch.level <= 2 ? 0.15 : -0.08;
+        if (oak && branch.level <= 2) {
+          // Long oak scaffolds can leave the bole almost horizontally, but
+          // their outer growth turns upward rather than continuing as a pole.
+          // Apply the lift progressively while the skeleton is grown so
+          // child branches and leaves follow the same curved path.
+          const curve = THREE.MathUtils.clamp((this.options.branch.limbBends ?? 0) / 0.85, 0, 1);
+          minimumY += (branch.level === 1 ? 0.40 : 0.25) * curve
+            * THREE.MathUtils.smoothstep((i + 1) / branch.sectionCount, 0.05, 0.80);
+        }
+        const lifted = liftDirection(direction.clone(), minimumY, uprightStrength(this.options));
         qSection.premultiply(new THREE.Quaternion().setFromUnitVectors(direction, lifted));
       }
 
