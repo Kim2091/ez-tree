@@ -71,6 +71,26 @@ test('size limits regrow the crown while preserving leaf size and trunk thicknes
   assert.deepEqual(tree.skeleton.branches[0].sections.at(-1).origin.toArray(), originalTip);
 });
 
+test('height-limited oak keeps its upright trunk and attached limbs', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Medium');
+  tree.options.seed = 85;
+  tree.options.bounds.enabled = true;
+  tree.options.bounds.growthScale = { x: 1, y: 0.25, z: 1 };
+  tree.generate({ leafDetail: 'micro' });
+  const trunk = tree.skeleton.branches[0], base = trunk.sections[0].origin;
+  for (const section of trunk.sections.slice(1)) {
+    const delta = section.origin.clone().sub(base);
+    const angle = Math.atan2(Math.hypot(delta.x, delta.z), delta.y) * 180 / Math.PI;
+    assert(angle <= 10.01, `${angle} degrees`);
+  }
+  for (const branch of tree.skeleton.branches) {
+    if (!branch.attachment || branch.surfaceRoot) continue;
+    const { a, b, f } = branch.attachment;
+    const expected = a.origin.clone().lerp(b.origin, f);
+    assert(branch.sections[0].origin.distanceTo(expected) < 1e-5);
+  }
+});
+
 test('nonbinding limits leave generated branch paths untouched', () => {
   const tree = new Tree(); tree.loadPreset('Oak Small');
   const before = tree.skeleton.branches.map(branch => branch.sections.map(section => section.origin.toArray()));

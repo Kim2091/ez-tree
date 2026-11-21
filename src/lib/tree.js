@@ -37,26 +37,44 @@ function uprightStrength(options) {
 // lengths and directions without stretching already-meshed foliage or bark.
 function reshapeGrowth(skeleton, scale) {
   const factors = new THREE.Vector3(scale.x, scale.y, scale.z);
-  const rotate = orientation => {
+  // Compress the bole's lateral movement no less than its height, so a
+  // height limit cannot turn an upright trunk into a severely leaning one.
+  // Propagate its changing offsets through every attachment to keep joints
+  // and leaves on the wood while the surrounding crown uses each axis limit.
+  const trunkFactors = new THREE.Vector3(Math.min(scale.x, scale.y), scale.y, Math.min(scale.z, scale.y));
+  const shifts = new Map();
+  const attachmentShift = attachment => {
+    const shift = new THREE.Vector3();
+    if (!attachment) return shift;
+    const { a, b, f } = attachment;
+    if (shifts.has(a)) shift.addScaledVector(shifts.get(a), 1 - f);
+    if (shifts.has(b)) shift.addScaledVector(shifts.get(b), f);
+    return shift;
+  };
+  const rotate = (orientation, stretch) => {
     const q = new THREE.Quaternion().setFromEuler(orientation);
     const before = up.clone().applyQuaternion(q);
-    const after = before.clone().multiply(factors).normalize();
+    const after = before.clone().multiply(stretch).normalize();
     if (after.lengthSq() > 1e-12) q.premultiply(new THREE.Quaternion().setFromUnitVectors(before, after));
     orientation.setFromQuaternion(q);
   };
   for (const branch of skeleton.branches) {
+    const inheritedShift = attachmentShift(branch.attachment);
     let distance = 0;
     for (let i = 0; i < branch.sections.length; i++) {
       const section = branch.sections[i];
-      section.origin.multiply(factors);
-      rotate(section.orientation);
+      const original = section.origin.clone();
+      const shift = branch.trunk ? original.clone().multiply(trunkFactors).sub(original.clone().multiply(factors)) : inheritedShift;
+      section.origin.multiply(factors).add(shift);
+      shifts.set(section, shift.clone());
+      rotate(section.orientation, branch.trunk ? trunkFactors : factors);
       if (i) distance += section.origin.distanceTo(branch.sections[i - 1].origin);
       section.distance = distance;
     }
   }
   for (const leaf of skeleton.leaves) {
-    leaf.origin.multiply(factors);
-    rotate(leaf.orientation);
+    leaf.origin.multiply(factors).add(attachmentShift(leaf.attachment));
+    rotate(leaf.orientation, factors);
   }
 }
 
@@ -867,6 +885,12 @@ export class Tree extends THREE.Group {
         const direction = up.clone().applyQuaternion(qSection);
         const lifted = liftDirection(direction.clone(), branch.level <= 2 ? 0.15 : -0.08, uprightStrength(this.options));
         qSection.premultiply(new THREE.Quaternion().setFromUnitVectors(direction, lifted));
+      } else if (oak) {
+        // Trunk curves, fork deflection, and random drift can add together.
+        // Bound their combined tilt so ordinary seeds keep an upright bole.
+        const direction = up.clone().applyQuaternion(qSection);
+        const lifted = liftDirection(direction.clone(), Math.cos(THREE.MathUtils.degToRad(10)), uprightStrength(this.options));
+        qSection.premultiply(new THREE.Quaternion().setFromUnitVectors(direction, lifted));
       }
 
       sectionOrientation.setFromQuaternion(qSection);
@@ -1098,7 +1122,11 @@ export class Tree extends THREE.Group {
       // spread at wider angles and have unequal access to the open crown.
       const competitor = !evergreen && count > 1 && i === dominant;
       const exposure = Math.cos(angle - openSide);
-      const reach = competitor ? 0.42 : 0.25 * exposure + growth.random(0.17, -0.20);
+      const oakScaffold = this.options.leaves.type === LeafType.Oak && !this.options.trellis.enabled && level === 1;
+      // Keep natural variation without systematically making one side of
+      // the oak crown much longer and heavier than the other.
+      const reach = competitor ? (oakScaffold ? 0.18 : 0.42)
+        : (oakScaffold ? 0.12 : 0.25) * exposure + growth.random(0.17, -0.20);
       const forkAngle = competitor ? -0.34 : growth.random(0.39, -0.16);
       // A mature oak usually has several rising scaffold limbs, not a
       // uniform ring of equal horizontal arms. Reserve two later buds as

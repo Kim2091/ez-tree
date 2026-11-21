@@ -30,6 +30,21 @@ test('oak trunks retain a bend through the main fork and the crown stays balance
   assert(straight.distanceTo(tree.skeleton.branches[0].sections.at(-1).origin) > 0.1);
 });
 
+test('oak trunk curvature stays upright across seeds', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Medium');
+  tree.options.leaves.count = 0;
+  for (const seed of [3, 10, 18, 19, 21, 42, 60, 66, 69, 76, 81, 85]) {
+    tree.options.seed = seed; tree.generate({ leafScale: 0 });
+    const trunk = tree.skeleton.branches[0];
+    const base = trunk.sections[0].origin;
+    for (const section of trunk.sections.slice(1)) {
+      const delta = section.origin.clone().sub(base);
+      const angle = Math.atan2(Math.hypot(delta.x, delta.z), delta.y) * 180 / Math.PI;
+      assert(angle <= 10.01, `seed ${seed}: ${angle} degrees`);
+    }
+  }
+});
+
 test('upright broadleaf growth keeps major limbs rising while willow remains weeping', () => {
   for (const name of ['Oak Medium', 'Ash Medium', 'Sugar Maple']) {
     const tree = new Tree(); tree.loadPreset(name);
