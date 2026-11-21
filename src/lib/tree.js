@@ -14,6 +14,52 @@ const up = new THREE.Vector3(0, 1, 0);
 const turn = Math.PI * 2;
 const goldenAngle = Math.PI * (3 - Math.sqrt(5));
 
+// Keep the structural growth direction above a shallow rising angle, while
+// preserving its azimuth. Smaller shoots can still dip slightly; willows and
+// trellises opt out so their deliberately hanging/trained form remains.
+function liftDirection(direction, minimumY, strength) {
+  if (strength <= 0 || direction.y >= minimumY) return direction;
+  const horizontal = new THREE.Vector3(direction.x, 0, direction.z);
+  if (horizontal.lengthSq() < 1e-10) horizontal.set(1, 0, 0);
+  horizontal.normalize().multiplyScalar(Math.sqrt(1 - minimumY * minimumY));
+  const target = horizontal.setY(minimumY);
+  return direction.lerp(target, strength).normalize();
+}
+
+function uprightStrength(options) {
+  if (options.type !== TreeType.Deciduous || options.leaves.type === LeafType.Willow
+    || options.trellis.enabled || options.branch.length[0] < 0.75) return 0;
+  return THREE.MathUtils.clamp(options.branch.uprightGrowth ?? 1, 0, 1);
+}
+
+// Reshape the growth skeleton around the root, then rebuild the wood and
+// leaves at their original cross-section and blade size. This changes branch
+// lengths and directions without stretching already-meshed foliage or bark.
+function reshapeGrowth(skeleton, scale) {
+  const factors = new THREE.Vector3(scale.x, scale.y, scale.z);
+  const rotate = orientation => {
+    const q = new THREE.Quaternion().setFromEuler(orientation);
+    const before = up.clone().applyQuaternion(q);
+    const after = before.clone().multiply(factors).normalize();
+    if (after.lengthSq() > 1e-12) q.premultiply(new THREE.Quaternion().setFromUnitVectors(before, after));
+    orientation.setFromQuaternion(q);
+  };
+  for (const branch of skeleton.branches) {
+    let distance = 0;
+    for (let i = 0; i < branch.sections.length; i++) {
+      const section = branch.sections[i];
+      section.origin.multiply(factors);
+      rotate(section.orientation);
+      if (i) distance += section.origin.distanceTo(branch.sections[i - 1].origin);
+      section.distance = distance;
+    }
+  }
+  for (const leaf of skeleton.leaves) {
+    leaf.origin.multiply(factors);
+    rotate(leaf.orientation);
+  }
+}
+
 // The blade's local +Y follows its midrib and +Z is its upper surface.
 function leafOrientation(axis, roll) {
   axis.normalize();
@@ -422,15 +468,6 @@ export class Tree extends THREE.Group {
     };
   }
 
-  /** Calculate a uniform scale for local bounds, keeping the origin fixed. */
-  sizeLimitFactor(bounds) {
-    if (!this.options.bounds?.enabled || !bounds || bounds.isEmpty()) return 1;
-    const size = bounds.getSize(new THREE.Vector3());
-    const max = this.options.bounds.max;
-    return Math.min(1, ...['x', 'y', 'z'].map(axis => size[axis] > 0
-      ? Math.max(0.001, max[axis]) / size[axis] : 1));
-  }
-
   /**
    * Build static, instanced leaf meshes for a glTF export. The returned group
    * uses the same leaf selection, damage and attachment offsets as the baked
@@ -535,6 +572,10 @@ export class Tree extends THREE.Group {
     this.skeleton.branches = this.skeleton.branches.filter(branch => !branch.fineTwig || occupied.has(branch.sections.at(-1)));
     if (this.options.branch.surfaceRoots) {
       this.skeleton.branches.push(...surfaceRootBranches(this.skeleton.branches[0], this.options.seed));
+    }
+    const growthScale = this.options.bounds?.growthScale;
+    if (this.options.bounds?.enabled && growthScale && ['x', 'y', 'z'].some(axis => Math.abs(growthScale[axis] - 1) > 1e-9)) {
+      reshapeGrowth(this.skeleton, growthScale);
     }
   }
 
@@ -807,6 +848,12 @@ export class Tree extends THREE.Group {
         }
       }
 
+      if (branch.level > 0) {
+        const direction = up.clone().applyQuaternion(qSection);
+        const lifted = liftDirection(direction.clone(), branch.level <= 2 ? 0.15 : -0.08, uprightStrength(this.options));
+        qSection.premultiply(new THREE.Quaternion().setFromUnitVectors(direction, lifted));
+      }
+
       sectionOrientation.setFromQuaternion(qSection);
     }
 
@@ -851,6 +898,7 @@ export class Tree extends THREE.Group {
       sections,
       segmentCount: branch.segmentCount,
       baseRadius: branch.radius,
+      level: branch.level,
       // A stable independent phase prevents identical bark features from
       // lining up on neighboring limbs, without changing growth randomness.
       barkOffset: branch.level === 0 ? 0 : new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x6c8e9cf5)).random(),
@@ -1040,6 +1088,8 @@ export class Tree extends THREE.Group {
         * (coLeader ? 0.55 : 1 + variation * forkAngle));
       let direction = new THREE.Vector3(Math.sin(angle) * Math.sin(opening), Math.cos(opening),
         Math.cos(angle) * Math.sin(opening)).applyQuaternion(frame);
+      direction.normalize();
+      liftDirection(direction, level <= 2 ? 0.15 : -0.08, uprightStrength(this.options));
       if (evergreen && level > 1) {
         const axis = up.clone().applyQuaternion(frame);
         const side = new THREE.Vector3().crossVectors(axis, up);

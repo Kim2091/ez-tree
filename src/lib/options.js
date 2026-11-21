@@ -4,7 +4,7 @@ export default class TreeOptions {
   constructor() {
     this.seed = 0;
     this.type = oak.type;
-    this.bounds = { enabled: false, max: { x: 30, y: 30, z: 30 } };
+    this.bounds = { enabled: false, max: { x: 30, y: 30, z: 30 }, growthScale: { x: 1, y: 1, z: 1 } };
     // A new library tree uses the same crown and surfaces as the editor's oak.
     // Clone the nested controls so edits to one seed never mutate the preset.
     this.bark = {
@@ -15,6 +15,7 @@ export default class TreeOptions {
     this.branch = structuredClone(oak.branch);
     this.branch.structureVariation = 0.75;
     this.branch.limbBends = 0.85;
+    this.branch.uprightGrowth = 1;
     this.branch.forkedCrown = true;
     this.branch.stopAtGround = true;
     this.branch.surfaceRoots = true;

@@ -3,6 +3,23 @@ import test from 'node:test';
 import { Vector3 } from 'three';
 import { LeafType, Tree } from '../build/ez-tree.es.js';
 
+test('upright broadleaf growth keeps major limbs rising while willow remains weeping', () => {
+  for (const name of ['Oak Medium', 'Ash Medium', 'Sugar Maple']) {
+    const tree = new Tree(); tree.loadPreset(name);
+    const countFalling = () => tree.skeleton.branches.filter(branch => branch.level > 0 && branch.level <= 2)
+      .reduce((count, branch) => count + branch.sections.slice(1).filter((section, i) =>
+        section.origin.y < branch.sections[i].origin.y - 0.01).length, 0);
+    const corrected = countFalling();
+    tree.options.branch.uprightGrowth = 0; tree.generate({ leafScale: 0 });
+    const original = countFalling();
+    assert(original > 0 && corrected < original * 0.1, `${name}: ${corrected} vs ${original}`);
+  }
+  const willow = new Tree(); willow.loadPreset('Weeping Willow');
+  const before = willow.skeleton.branches.map(branch => branch.sections.map(section => section.origin.toArray()));
+  willow.options.branch.uprightGrowth = 0; willow.generate({ leafScale: 0 });
+  assert.deepEqual(willow.skeleton.branches.map(branch => branch.sections.map(section => section.origin.toArray())), before);
+});
+
 test('broadleaf scaffolds fork again, hold their junction at LOD and carry fine leaf-bearing twigs', () => {
   const tree = new Tree();
   tree.loadPreset('Ash Medium');

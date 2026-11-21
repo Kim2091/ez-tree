@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { Box3, Group, Mesh, Vector3 } from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { Tree } from '../build/ez-tree.es.js';
 import { LODManager } from '../src/app/lod-management.js';
+import { constrainLowerLODBounds, fitsSize, regrowToSize } from '../src/app/size-fit.js';
 import { exportUSD } from '../src/app/usd.js';
 
 test('LOD fitting enforces decreasing budgets without changing LOD0', () => {
@@ -29,22 +31,66 @@ test('LOD fitting enforces decreasing budgets without changing LOD0', () => {
   assert(counts[0] >= counts[1] && counts[1] >= counts[2]);
 });
 
-test('size limits uniformly fit every LOD without changing the LOD0 scale', () => {
+test('size limits regrow the crown while preserving leaf size and trunk thickness', () => {
   const tree = new Tree(); tree.loadPreset('Ash Small');
+  const originalSizes = tree.skeleton.leaves.map(leaf => leaf.size);
+  const trunkRadius = tree.skeleton.branches[0].baseRadius;
+  const originalBranches = tree.skeleton.branches.length;
+  const originalTip = tree.skeleton.branches[0].sections.at(-1).origin.toArray();
   tree.options.bounds.enabled = true;
   tree.options.bounds.max = { x: 3, y: 4, z: 2 };
   const details = [{ leafDetail: 'thin' }, { leafDetail: 'thin', leafScale: 2 }, { leafDetail: 'micro' }];
   const manager = new LODManager(tree, details);
-  const base = tree.sizeLimitFactor(manager.boundsFor(details[0]));
-  const scales = details.map(detail => Math.min(base, tree.sizeLimitFactor(manager.boundsFor(detail))));
-  for (const [i, detail] of details.entries()) {
-    const size = manager.boundsFor(detail).getSize(new Vector3()).multiplyScalar(scales[i]);
-    assert(size.x <= 3 + 1e-6 && size.y <= 4 + 1e-6 && size.z <= 2 + 1e-6);
-  }
+  assert(regrowToSize(tree, manager, details).fitted);
+  assert.deepEqual(tree.skeleton.leaves.map(leaf => leaf.size), originalSizes);
+  assert.equal(tree.skeleton.branches[0].baseRadius, trunkRadius);
+  assert.equal(tree.skeleton.branches.length, originalBranches);
+  assert(new Set(Object.values(tree.options.bounds.growthScale).map(value => value.toFixed(3))).size > 1);
+  assert.deepEqual(tree.scale.toArray(), [1, 1, 1]);
+  constrainLowerLODBounds(manager, details, tree.options.bounds.max);
+  for (const detail of details) assert(fitsSize(manager.boundsFor(detail), tree.options.bounds.max));
+  const base = manager.boundsFor(details[0]).getSize(new Vector3()).toArray();
+  const fingerprint = () => {
+    const { branches, leaves } = tree.createGeometry(details[0]);
+    const hash = createHash('sha256');
+    for (const geometry of [branches, leaves]) {
+      hash.update(Buffer.from(geometry.attributes.position.array.buffer));
+      geometry.dispose();
+    }
+    return hash.digest('hex');
+  };
+  const originalGeometry = fingerprint();
   details[1] = { leafDetail: 'thin', leafScale: 0.5 };
   manager.reconcile();
-  assert.equal(tree.sizeLimitFactor(manager.boundsFor(details[0])), base);
+  constrainLowerLODBounds(manager, details, tree.options.bounds.max);
+  assert.deepEqual(manager.boundsFor(details[0]).getSize(new Vector3()).toArray(), base);
+  assert.equal(fingerprint(), originalGeometry);
   assert.deepEqual(tree.position.toArray(), [0, 0, 0]);
+  tree.options.bounds.enabled = false;
+  regrowToSize(tree, manager, details);
+  assert.deepEqual(tree.skeleton.branches[0].sections.at(-1).origin.toArray(), originalTip);
+});
+
+test('nonbinding limits leave generated branch paths untouched', () => {
+  const tree = new Tree(); tree.loadPreset('Oak Small');
+  const before = tree.skeleton.branches.map(branch => branch.sections.map(section => section.origin.toArray()));
+  tree.options.bounds.enabled = true;
+  tree.options.bounds.max = { x: 1000, y: 1000, z: 1000 };
+  const details = [{ leafDetail: 'thin' }], manager = new LODManager(tree, details);
+  assert(regrowToSize(tree, manager, details).fitted);
+  assert.deepEqual(tree.skeleton.branches.map(branch => branch.sections.map(section => section.origin.toArray())), before);
+});
+
+test('unattainable size limits restore the original instead of clipping fixed-size features', () => {
+  const tree = new Tree(); tree.options.branch.levels = 0; tree.options.leaves.count = 0;
+  tree.generate();
+  const originalTip = tree.skeleton.branches[0].sections.at(-1).origin.toArray();
+  tree.options.bounds.enabled = true;
+  tree.options.bounds.max = { x: 0.01, y: 0.01, z: 0.01 };
+  const details = [{ leafDetail: 'thin' }], manager = new LODManager(tree, details);
+  assert.equal(regrowToSize(tree, manager, details).fitted, false);
+  assert.deepEqual(tree.options.bounds.growthScale, { x: 1, y: 1, z: 1 });
+  assert.deepEqual(tree.skeleton.branches[0].sections.at(-1).origin.toArray(), originalTip);
 });
 
 test('lower main branches can be raised or culled at a trunk clearance', () => {
@@ -68,17 +114,18 @@ test('lower main branches can be raised or culled at a trunk clearance', () => {
   for (const branch of culled) assert(branch.sections[0].origin.y >= 3 - 1e-6);
 });
 
-test('size-limited output keeps its transform through GLB and USD export', async () => {
+test('regrown size-limited geometry exports without a model scaling transform', async () => {
   const tree = new Tree();
   tree.options.branch.levels = 0; tree.options.leaves.count = 8;
   tree.options.bounds.enabled = true;
   tree.options.bounds.max = { x: 2, y: 3, z: 2 };
   tree.generate({ leafDetail: 'thin' });
   const manager = new LODManager(tree, [{ leafDetail: 'thin' }]);
-  const scale = tree.sizeLimitFactor(manager.boundsFor(manager.details[0]));
-  const model = new Group(); model.name = 'Tree'; model.scale.setScalar(scale);
-  for (const mesh of [tree.branchesMesh, tree.leavesMesh]) {
-    const copy = new Mesh(mesh.geometry, mesh.material.clone());
+  assert(regrowToSize(tree, manager, manager.details).fitted);
+  const model = new Group(); model.name = 'Tree';
+  const geometry = tree.createGeometry(manager.details[0]);
+  for (const [mesh, shape] of [[tree.branchesMesh, geometry.branches], [tree.leavesMesh, geometry.leaves]]) {
+    const copy = new Mesh(shape, mesh.material.clone());
     model.add(copy);
   }
   const previous = globalThis.FileReader;
@@ -92,6 +139,6 @@ test('size-limited output keeps its transform through GLB and USD export', async
     assert(size.x <= 2 + 1e-5 && size.y <= 3 + 1e-5 && size.z <= 2 + 1e-5);
     const usd = await exportUSD(model).text();
     assert(usd.includes('matrix4d xformOp:transform'));
-    assert(usd.includes(Number(scale.toPrecision(7)).toString()));
+    assert.deepEqual(model.scale.toArray(), [1, 1, 1]);
   } finally { globalThis.FileReader = previous; }
 });

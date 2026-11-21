@@ -10,6 +10,7 @@ import { collectTextures, exportUSD } from './usd';
 import { leafDiffuseTransmission } from './leaf-gltf';
 import { frameTree } from './scene';
 import { LODManager } from './lod-management';
+import { constrainLowerLODBounds, regrowToSize } from './size-fit';
 
 const exporter = new GLTFExporter();
 exporter.register(leafDiffuseTransmission);
@@ -127,7 +128,7 @@ const icons = {
 /**
  * Creates a slider control with label
  */
-function createSlider(label, value, min, max, step, onChange) {
+function createSlider(label, value, min, max, step, onChange, { commitOnly = false } = {}) {
   const container = document.createElement('div');
   container.className = 'control-row';
 
@@ -163,8 +164,9 @@ function createSlider(label, value, min, max, step, onChange) {
     const val = parseFloat(e.target.value);
     valueInput.value = formatValue(val, step);
     setFill();
-    onChange(val);
+    if (!commitOnly) onChange(val);
   });
+  if (commitOnly) slider.addEventListener('change', () => onChange(Number(slider.value)));
 
   valueInput.addEventListener('change', (e) => {
     let val = parseFloat(e.target.value);
@@ -548,7 +550,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   let previewLevel = 0;
   let details = defaultDetails();
   const lodManager = new LODManager(tree, details);
-  let lodScales = [1, 1, 1];
+  let boundsFit = true;
   let lodStatus;
   let boundsStatus;
   let clearanceStatus;
@@ -634,20 +636,27 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     updateInfoDisplays();
   }
 
-  function updateLODOrder({ invalidate = false, auto = false } = {}) {
+  function updateLODOrder({ invalidate = false, auto = false, regrow = false, restartBounds = false } = {}) {
     if (invalidate) lodManager.invalidate();
     lodManager.details = details;
+    if (regrow) boundsFit = regrowToSize(tree, lodManager, details, { restart: restartBounds }).fitted;
+    tree.scale.setScalar(1);
     const adjusted = lodManager.reconcile({ auto });
-    const baseScale = tree.sizeLimitFactor(lodManager.boundsFor(details[0]));
-    lodScales = details.map(detail => Math.min(baseScale, tree.sizeLimitFactor(lodManager.boundsFor(detail))));
-    tree.scale.setScalar(lodScales[previewLevel]);
+    if (tree.options.bounds.enabled && boundsFit) {
+      for (const i of constrainLowerLODBounds(lodManager, details, tree.options.bounds.max)) {
+        if (!adjusted.includes(i)) adjusted.push(i);
+      }
+    }
     const bounds = lodManager.boundsFor(details[previewLevel]);
     if (boundsStatus && !bounds.isEmpty()) {
-      const size = bounds.getSize(new THREE.Vector3()).multiplyScalar(lodScales[previewLevel]);
-      boundsStatus.textContent = `LOD${previewLevel} size: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m`;
+      const size = bounds.getSize(new THREE.Vector3());
+      const factors = tree.options.bounds.growthScale;
+      boundsStatus.textContent = boundsFit
+        ? `LOD${previewLevel} size: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m${tree.options.bounds.enabled ? ` · growth X/Y/Z: ${factors.x.toFixed(2)} / ${factors.y.toFixed(2)} / ${factors.z.toFixed(2)}` : ''}`
+        : 'Cannot fit these limits while preserving branch thickness and leaf size.';
     }
     if (clearanceStatus) clearanceStatus.textContent = tree.options.bounds.enabled
-      ? `Approximate clearance after size fit: ${(tree.options.branch.clearTrunkHeight * tree.scale.x).toFixed(2)} m`
+      ? `Approximate clearance after size fit: ${(tree.options.branch.clearTrunkHeight * tree.options.bounds.growthScale.y).toFixed(2)} m`
       : '';
     if (lodStatus) {
       const counts = details.map((detail, i) => `LOD${i}: ${lodManager.count(detail).toLocaleString()}`);
@@ -678,10 +687,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   const onChange = () => {
     applyTreeTextures(tree);
     const t0 = performance.now();
-    tree.generate(details[previewLevel]);
-    lastBuildMs = performance.now() - t0;
     fitTarget = null;
-    updateLODOrder({ invalidate: true });
+    updateLODOrder({ regrow: true, restartBounds: true });
+    lastBuildMs = performance.now() - t0;
     applyLODPreview();
     refreshOptimization();
     tree.traverse((o) => {
@@ -702,8 +710,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     initialPreset,
     (val) => {
       loadPresetWithTextures(tree, val, false);
-      tree.generate(details[previewLevel]);
-      updateLODOrder({ invalidate: true });
+      updateLODOrder({ regrow: true, restartBounds: true });
       applyLODPreview();
       frameTree(tree, camera, orbitControls, environment.skybox.sun);
       fitTarget = null;
@@ -741,7 +748,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   function editDetail(key, value) {
     details[previewLevel][key] = value;
     fitTarget = null;
-    updateLODOrder();
+    updateLODOrder({ regrow: previewLevel === 0 && tree.options.bounds.enabled });
     applyLODPreview();
     refreshOptimization();
     updateInfoDisplays();
@@ -767,7 +774,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     const leafDetail = details[previewLevel].leafDetail;
     details[previewLevel] = tree.fitTriangleBudget(budget, { thinLeaves: leafDetail === 'thin', compactLeaves: leafDetail === 'compact', microLeaves: leafDetail === 'micro' });
     fitTarget = budget;
-    updateLODOrder();
+    updateLODOrder({ regrow: previewLevel === 0 && tree.options.bounds.enabled });
     applyLODPreview();
     refreshOptimization();
     updateInfoDisplays();
@@ -784,7 +791,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     }
     details[previewLevel] = tree.fitTriangleBudget(budget, { microLeaves: true });
     fitTarget = budget;
-    updateLODOrder();
+    updateLODOrder({ regrow: previewLevel === 0 && tree.options.bounds.enabled, restartBounds: previewLevel === 0 });
     applyLODPreview();
     refreshOptimization();
     refreshAllControls();
@@ -821,7 +828,8 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   sizeSection.element.dataset.treeWide = '';
   const boundsEnabled = createToggle('Fit Within Maximum Dimensions', tree.options.bounds.enabled, value => {
     tree.options.bounds.enabled = value;
-    updateLODOrder();
+    updateLODOrder({ regrow: true, restartBounds: true });
+    applyLODPreview();
     frameTree(tree, camera, orbitControls, environment.skybox.sun);
     updateInfoDisplays();
   });
@@ -830,10 +838,11 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   for (const [axis, label] of [['x', 'Max Width X (m)'], ['y', 'Max Height Y (m)'], ['z', 'Max Depth Z (m)']]) {
     const control = createSlider(label, tree.options.bounds.max[axis], 0.1, 200, 0.1, value => {
       tree.options.bounds.max[axis] = value;
-      updateLODOrder();
+      updateLODOrder({ regrow: tree.options.bounds.enabled, restartBounds: true });
+      if (tree.options.bounds.enabled) applyLODPreview();
       if (tree.options.bounds.enabled) frameTree(tree, camera, orbitControls, environment.skybox.sun);
       updateInfoDisplays();
-    });
+    }, { commitOnly: true });
     sizeSection.add(control);
     controls.push({ control, update: () => control.setValue(tree.options.bounds.max[axis]) });
   }
@@ -842,7 +851,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   sizeSection.add(boundsStatus);
   const sizeHelp = document.createElement('div');
   sizeHelp.className = 'control-label';
-  sizeHelp.textContent = 'Uniformly scales around the tree origin. Lower LODs can shrink slightly if their leaves extend farther.';
+  sizeHelp.textContent = 'Regrows branch positions to fit each axis while retaining leaf size and branch thickness.';
   sizeSection.add(sizeHelp);
   parametersTab.appendChild(sizeSection.element);
 
@@ -856,7 +865,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
       details[previewLevel] = tree.fitTriangleBudget(fitTarget, { thinLeaves: leafDetail === 'thin', compactLeaves: leafDetail === 'compact', microLeaves: leafDetail === 'micro' });
       refreshOptimization();
     }
-    updateLODOrder({ invalidate: true });
+    updateLODOrder({ invalidate: true, regrow: tree.options.bounds.enabled });
     applyLODPreview();
     refreshOptimization();
     updateInfoDisplays();
@@ -911,6 +920,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   // ----- Branches Section -----
   const branchSection = createSection('Branches', 'share', false);
   branchSection.element.dataset.treeWide = '';
+
+  const uprightGrowth = createSlider('Upward Branch Growth', tree.options.branch.uprightGrowth, 0, 1, 0.01, value => {
+    tree.options.branch.uprightGrowth = value;
+    onChange();
+  });
+  branchSection.add(uprightGrowth);
+  controls.push({ control: uprightGrowth, update: () => uprightGrowth.setValue(tree.options.branch.uprightGrowth) });
 
   const clearTrunk = createSlider('Clear Trunk Height (unscaled m)', tree.options.branch.clearTrunkHeight, 0, 30, 0.1, value => {
     tree.options.branch.clearTrunkHeight = value;
@@ -1450,7 +1466,6 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   function snapshotModel() {
     const group = new THREE.Group();
     group.name = 'Tree';
-    group.scale.copy(tree.scale);
     for (const mesh of [tree.branchesMesh, tree.leavesMesh]) {
       const snapshot = new THREE.Mesh(mesh.geometry, mesh.material.clone());
       if (mesh.material.leafScattering) snapshot.material.leafScattering = { ...mesh.material.leafScattering };
@@ -1470,10 +1485,9 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
       const source = allLevels ? new Tree() : null;
       source?.options.copy(tree.options);
       const levels = structuredClone(details);
-      const scales = [...lodScales];
       try {
         await Promise.all(model.children.slice(0, 2).map(mesh => prepareExportMaterial(mesh.material)));
-        await action(model, level, setStatus, { source, levels, scales });
+        await action(model, level, setStatus, { source, levels });
       } catch (error) {
         exportStatus.textContent = 'Export failed. ' + error.message;
         console.error(error);
@@ -1495,7 +1509,6 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     const instanced = tree.createInstancedFoliage(levels[level], model.children[1].material);
     const output = new THREE.Group();
     output.name = 'Tree';
-    output.scale.copy(model.scale);
     output.add(model.children[0].clone(), instanced);
     if (model.children[2]) output.add(model.children[2].clone(true));
     try {
@@ -1512,14 +1525,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
     download(exportUSD(model), `tree_LOD${level}.usd`);
   });
 
-  async function exportLevels(model, format, setStatus, { source, levels, scales }) {
+  async function exportLevels(model, format, setStatus, { source, levels }) {
     const files = {};
     const textures = format === 'usd' ? await collectTextures(model, files) : {};
     for (const [i, detail] of levels.entries()) {
       setStatus(`Exporting LOD ${i + 1}/${levels.length}...`);
       await paint();
       const { branches, leaves } = source.createGeometry(detail);
-      model.scale.setScalar(scales[i]);
       model.children[0].geometry = branches;
       setLeafGeometry(model.children[1], leaves);
       try {
@@ -1643,8 +1655,7 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
           }
           tree.options.copy(preset);
           applyTreeTextures(tree);
-          tree.generate(details[previewLevel]);
-          updateLODOrder({ invalidate: true });
+          updateLODOrder({ regrow: true, restartBounds: true });
           applyLODPreview();
           frameTree(tree, camera, orbitControls, environment.skybox.sun);
           fitTarget = null;
