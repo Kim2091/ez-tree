@@ -698,13 +698,22 @@ export class Tree extends THREE.Group {
     const bends = branch.level > 0 ? THREE.MathUtils.clamp(this.options.branch.limbBends ?? 0, 0, 1) * (branch.scaffold ? 0.52 : 1) : 0;
     const turns = bends ? limbBends(new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x94d049bb)),
       branch.attachment?.a === branch.attachment?.b, this.options.type === TreeType.Evergreen) : [];
-    let leaderAxis, handoff, leaderBend;
-    if (!fork && variation && branch.level === 0 && this.options.type === TreeType.Deciduous) {
+    let leaderAxis, basalAxis, handoff, leaderBend, basalBend = 0;
+    const oak = this.options.leaves.type === LeafType.Oak && !this.options.trellis.enabled;
+    const trunkVariation = oak ? Math.max(0.5, variation) : variation;
+    if ((!fork || oak) && trunkVariation && branch.level === 0 && this.options.type === TreeType.Deciduous) {
       const rng = new RNG(this.options.seed ^ 0x6ac07385);
       const heading = rng.random(turn);
       leaderAxis = new THREE.Vector3(Math.cos(heading), 0, Math.sin(heading));
       handoff = rng.random(0.68, 0.38);
-      leaderBend = variation * Math.min(1, 30 * Math.abs(this.options.branch.gnarliness[0])) * rng.random(0.43, 0.20);
+      leaderBend = trunkVariation * Math.min(1, 30 * Math.abs(this.options.branch.gnarliness[0])) * rng.random(0.43, 0.20)
+        * THREE.MathUtils.clamp(this.options.branch.trunkBend ?? 1, 0, 1);
+      if (oak) {
+        basalBend = trunkVariation * rng.random(0.40, 0.25)
+          * THREE.MathUtils.clamp(this.options.branch.trunkBend ?? 1, 0, 1);
+        const basalHeading = heading + rng.random(1.15, 0.65);
+        basalAxis = new THREE.Vector3(Math.cos(basalHeading), 0, Math.sin(basalHeading));
+      }
     }
 
     // This information is used for generating child branches after the branch
@@ -777,6 +786,12 @@ export class Tree extends THREE.Group {
         const transfer = t => THREE.MathUtils.smoothstep(t, handoff - 0.16, handoff + 0.16);
         const step = transfer((i + 1) / branch.sectionCount) - transfer(i / branch.sectionCount);
         qSection.premultiply(new THREE.Quaternion().setFromAxisAngle(leaderAxis, leaderBend * step));
+      }
+      if (basalBend) {
+        const bend = t => THREE.MathUtils.smoothstep(t, 0.04, 0.38)
+          - 0.45 * THREE.MathUtils.smoothstep(t, 0.40, 0.82);
+        const step = bend((i + 1) / branch.sectionCount) - bend(i / branch.sectionCount);
+        qSection.premultiply(new THREE.Quaternion().setFromAxisAngle(basalAxis, basalBend * step));
       }
 
       // Rotate the section's growth direction toward force.direction (positive
@@ -899,6 +914,7 @@ export class Tree extends THREE.Group {
       segmentCount: branch.segmentCount,
       baseRadius: branch.radius,
       level: branch.level,
+      scaffold: Boolean(branch.scaffold),
       // A stable independent phase prevents identical bark features from
       // lining up on neighboring limbs, without changing growth randomness.
       barkOffset: branch.level === 0 ? 0 : new RNG(this.options.seed ^ Math.imul(this.skeleton.branches.length + 1, 0x6c8e9cf5)).random(),
@@ -1084,8 +1100,13 @@ export class Tree extends THREE.Group {
       const exposure = Math.cos(angle - openSide);
       const reach = competitor ? 0.42 : 0.25 * exposure + growth.random(0.17, -0.20);
       const forkAngle = competitor ? -0.34 : growth.random(0.39, -0.16);
+      // A mature oak usually has several rising scaffold limbs, not a
+      // uniform ring of equal horizontal arms. Reserve two later buds as
+      // additional leaders while leaving the other limbs free to spread.
+      const oakLeader = this.options.leaves.type === LeafType.Oak && !this.options.trellis.enabled
+        && level === 1 && count >= 4 && !coLeader && (i === Math.floor(count * 0.45) || i === Math.floor(count * 0.75));
       const opening = THREE.MathUtils.degToRad(opt.angle[level] * crownAngle * this.rng.random(1.14, 0.86)
-        * (coLeader ? 0.55 : 1 + variation * forkAngle));
+        * (coLeader ? 0.55 : oakLeader ? 0.70 : 1 + variation * forkAngle));
       let direction = new THREE.Vector3(Math.sin(angle) * Math.sin(opening), Math.cos(opening),
         Math.cos(angle) * Math.sin(opening)).applyQuaternion(frame);
       direction.normalize();
@@ -1109,7 +1130,7 @@ export class Tree extends THREE.Group {
       const child = new Branch(origin, orientation, opt.length[level] * vigor + remainingLength,
         radius * radiusRatio, level,
         opt.sections[level], opt.segments[level], vigor, attachment);
-      child.scaffold = Boolean(coLeader);
+      child.scaffold = Boolean(coLeader || oakLeader);
       child.sweep = variation * growth.random(0.98, 0.09) * (competitor ? 0.35 : 1);
       this.branchQueue.push(child);
     }

@@ -3,6 +3,33 @@ import test from 'node:test';
 import { Vector3 } from 'three';
 import { LeafType, Tree } from '../build/ez-tree.es.js';
 
+test('oak trunks retain a bend through the main fork and the crown stays balanced', () => {
+  for (const name of ['Oak Small', 'Oak Medium', 'Oak Large']) {
+    for (const seed of [35729, 23399, 42]) {
+      const tree = new Tree(); tree.loadPreset(name);
+      tree.options.seed = seed; tree.options.leaves.count = 0;
+      tree.options.branch.trunkBend = 0; tree.generate({ leafScale: 0 });
+      const before = tree.skeleton.branches[0];
+      assert(before.forkRing > 0, name);
+      const point = before.sections[Math.floor(before.sections.length * 0.35)].origin.clone();
+      tree.options.branch.trunkBend = 1; tree.generate({ leafScale: 0 });
+      const after = tree.skeleton.branches[0];
+      assert(point.distanceTo(after.sections[Math.floor(after.sections.length * 0.35)].origin) > 0.03, name);
+      assert(tree.skeleton.branches.filter(branch => branch.level === 1 && branch.scaffold).length >= 2, name);
+      tree.branchesMesh.geometry.computeBoundingBox();
+      const size = tree.branchesMesh.geometry.boundingBox.getSize(new Vector3());
+      const crownRatio = (size.x + size.z) / (2 * size.y);
+      assert(crownRatio > 0.65 && crownRatio < 1.75, `${name}, seed ${seed}: ${crownRatio}`);
+    }
+  }
+  const tree = new Tree(); tree.loadPreset('Oak Medium');
+  tree.options.branch.structureVariation = 0;
+  tree.options.branch.trunkBend = 0; tree.generate({ leafScale: 0 });
+  const straight = tree.skeleton.branches[0].sections.at(-1).origin.clone();
+  tree.options.branch.trunkBend = 1; tree.generate({ leafScale: 0 });
+  assert(straight.distanceTo(tree.skeleton.branches[0].sections.at(-1).origin) > 0.1);
+});
+
 test('upright broadleaf growth keeps major limbs rising while willow remains weeping', () => {
   for (const name of ['Oak Medium', 'Ash Medium', 'Sugar Maple']) {
     const tree = new Tree(); tree.loadPreset(name);

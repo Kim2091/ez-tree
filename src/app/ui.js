@@ -928,6 +928,13 @@ export function setupUI(tree, environment, renderer, scene, camera, orbitControl
   branchSection.add(uprightGrowth);
   controls.push({ control: uprightGrowth, update: () => uprightGrowth.setValue(tree.options.branch.uprightGrowth) });
 
+  const trunkBend = createSlider('Trunk Curve', tree.options.branch.trunkBend, 0, 1, 0.01, value => {
+    tree.options.branch.trunkBend = value;
+    onChange();
+  });
+  branchSection.add(trunkBend);
+  controls.push({ control: trunkBend, update: () => trunkBend.setValue(tree.options.branch.trunkBend) });
+
   const clearTrunk = createSlider('Clear Trunk Height (unscaled m)', tree.options.branch.clearTrunkHeight, 0, 30, 0.1, value => {
     tree.options.branch.clearTrunkHeight = value;
     onChange();

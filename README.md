@@ -29,6 +29,8 @@ Branch growth transitions are eased and intermediate rings round the curves. Chi
 
 **Branches → Structure Variation** defaults to 0.75. It varies the gaps between forks and the length and girth of neighboring limbs. A broadleaf lateral can compete with the leader, while pine keeps its tiers.
 
+Oak presets use a more balanced crown with shorter primary limbs, several rising scaffold limbs, finer secondary branching, and a gently irregular trunk that remains curved through its main fork. **Branches → Trunk Curve** controls the trunk bend. See the [bare oak comparison](docs/oak-crown-comparison.png) for two seeds; individual oaks vary considerably.
+
 ![The same Ash Medium seed from the same camera with leaves hidden, at zero and default structure variation](docs/ash-branch-structure.jpg)
 
 **Branches → Forked Broadleaf Crown** is on by default for free-growing deciduous trees. The trunk divides into two substantial stems. The continuing stem tapers and turns away from its partner, and the larger limbs can divide again. Some outer shoots also carry a finer side twig with its own leaves. Disable the control to recover the previous crown for a seed. Pine whorls and trellis-trained trees use their own branching patterns.

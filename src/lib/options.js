@@ -16,6 +16,7 @@ export default class TreeOptions {
     this.branch.structureVariation = 0.75;
     this.branch.limbBends = 0.85;
     this.branch.uprightGrowth = 1;
+    this.branch.trunkBend = 1;
     this.branch.forkedCrown = true;
     this.branch.stopAtGround = true;
     this.branch.surfaceRoots = true;
